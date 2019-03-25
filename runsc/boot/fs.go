@@ -16,6 +16,7 @@ package boot
 
 import (
 	"fmt"
+	"io"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -268,8 +269,12 @@ func getMountNameAndOptions(conf *Config, m specs.Mount, fds *fdDispenser) (stri
 
 func mountSubmounts(ctx context.Context, conf *Config, mns *fs.MountNamespace, root *fs.Dirent, mounts []specs.Mount, fds *fdDispenser) error {
 	for _, m := range mounts {
-		if err := mountSubmount(ctx, conf, mns, root, fds, m, mounts); err != nil {
-			return fmt.Errorf("mount submount %q: %v", m.Destination, err)
+		_, dirent, err_submount := mountSubmount(ctx, conf, mns, root, fds, m, mounts);
+		if dirent != nil {
+			dirent.DecRef()
+		}
+		if err_submount != nil {
+			return fmt.Errorf("mount submount %q: %v", m.Destination, err_submount)
 		}
 	}
 
@@ -287,17 +292,17 @@ func mountSubmounts(ctx context.Context, conf *Config, mns *fs.MountNamespace, r
 // be readonly, a lower ramfs overlay is added to create the mount point dir.
 // Another overlay is added with tmpfs on top if Config.Overlay is true.
 // 'm.Destination' must be an absolute path with '..' and symlinks resolved.
-func mountSubmount(ctx context.Context, conf *Config, mns *fs.MountNamespace, root *fs.Dirent, fds *fdDispenser, m specs.Mount, mounts []specs.Mount) error {
+func mountSubmount(ctx context.Context, conf *Config, mns *fs.MountNamespace, root *fs.Dirent, fds *fdDispenser, m specs.Mount, mounts []specs.Mount) (*fs.Inode, *fs.Dirent, error) {
 	// Map mount type to filesystem name, and parse out the options that we are
 	// capable of dealing with.
 	fsName, opts, useOverlay, err := getMountNameAndOptions(conf, m, fds)
 
 	// Return the error or nil that corresponds to the default case in getMountNameAndOptions.
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if fsName == "" {
-		return nil
+		return nil, nil, nil
 	}
 
 	// All filesystem names should have been mapped to something we know.
@@ -311,7 +316,7 @@ func mountSubmount(ctx context.Context, conf *Config, mns *fs.MountNamespace, ro
 
 	inode, err := filesystem.Mount(ctx, mountDevice(m), mf, strings.Join(opts, ","), nil)
 	if err != nil {
-		return fmt.Errorf("creating mount with source %q: %v", m.Source, err)
+		return nil, nil, fmt.Errorf("creating mount with source %q: %v", m.Source, err)
 	}
 
 	// If there are submounts, we need to overlay the mount on top of a
@@ -321,7 +326,7 @@ func mountSubmount(ctx context.Context, conf *Config, mns *fs.MountNamespace, ro
 		log.Infof("Adding submount overlay over %q", m.Destination)
 		inode, err = addSubmountOverlay(ctx, inode, submounts)
 		if err != nil {
-			return fmt.Errorf("adding submount overlay: %v", err)
+			return nil, nil, fmt.Errorf("adding submount overlay: %v", err)
 		}
 	}
 
@@ -329,22 +334,22 @@ func mountSubmount(ctx context.Context, conf *Config, mns *fs.MountNamespace, ro
 		log.Debugf("Adding overlay on top of mount %q", m.Destination)
 		inode, err = addOverlay(ctx, conf, inode, m.Type, mf)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
 
 	maxTraversals := uint(0)
 	dirent, err := mns.FindInode(ctx, root, root, m.Destination, &maxTraversals)
 	if err != nil {
-		return fmt.Errorf("can't find mount destination %q: %v", m.Destination, err)
+		return nil, nil, fmt.Errorf("can't find mount destination %q: %v", m.Destination, err)
 	}
-	defer dirent.DecRef()
+	// defer dirent.DecRef() // NOTE: remember to decref after the procedure
 	if err := mns.Mount(ctx, dirent, inode); err != nil {
-		return fmt.Errorf("mount %q error: %v", m.Destination, err)
+		return nil, nil, fmt.Errorf("mount %q error: %v", m.Destination, err)
 	}
 
 	log.Infof("Mounted %q to %q type %s", m.Source, m.Destination, m.Type)
-	return nil
+	return inode, dirent, nil
 }
 
 // p9MountOptions creates a slice of options for a p9 mount.
@@ -548,6 +553,7 @@ func setupContainerFS(procArgs *kernel.CreateProcessArgs, spec *specs.Spec, conf
 		Credentials:          auth.NewRootCredentials(creds.UserNamespace),
 		Umask:                0022,
 		MaxSymlinkTraversals: linux.MaxSymlinkTraversals,
+		Limits:								limits.NewLimitSet(),
 	}
 	rootCtx := rootProcArgs.NewContext(k)
 
@@ -748,7 +754,26 @@ func mountTmp(ctx context.Context, conf *Config, mns *fs.MountNamespace, root *f
 			Type:        tmpfs,
 			Destination: "/tmp",
 		}
-		return mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
+		inode, dirent, err_final := mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
+		if inode != nil && dirent != nil {
+			name := "hello_world"
+			file_hd, err := inode.Create(ctx, dirent, name, fs.FileFlags{Read: true, Write: true}, fs.FilePermissions{User: fs.PermMask{Read: true, Write: true}})
+			if err == nil {
+				if file_hd == nil {
+					log.Infof("file_handler is nil!!!")
+				}
+				r := strings.NewReader("some io. Reader stream to be read\n")
+				w := &fs.FileWriter{ctx, file_hd}
+				io.Copy(w, r)
+				file_hd.DecRef()
+			} else {
+				log.Infof("Can't create hello_world file when accessing inode.")
+			}
+			dirent.DecRef()
+		} else {
+			log.Infof("Can't create hello_world file.")
+		}
+		return err_final
 
 	default:
 		return err
