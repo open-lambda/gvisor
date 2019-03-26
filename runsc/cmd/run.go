@@ -63,10 +63,8 @@ func (r *Run) Execute(_ context.Context, f *flag.FlagSet, args ...interface{}) s
 	conf := args[0].(*boot.Config)
 	waitStatus := args[1].(*syscall.WaitStatus)
 
+
 	bundleDir := r.bundleDir
-	if bundleDir == "" {
-		bundleDir = getwdOrDie()
-	}
 	spec, err := specutils.ReadSpec(bundleDir)
 	if err != nil {
 		Fatalf("reading spec: %v", err)

@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"io/ioutil"
 
 	"gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/runsc/specutils"
@@ -65,6 +66,14 @@ func setUpChroot(pidns bool) error {
 	// We are a new mount namespace, so we can use /tmp as a directory to
 	// construct a new root.
 	chroot := os.TempDir()
+	files, err := ioutil.ReadDir(chroot)
+	log.Infof("set_up_chroot")
+	if err != nil {
+		return fmt.Errorf("error set_up_chroot: %v", err)
+	}
+	for _, f := range files {
+				log.Infof("chroot:" + f.Name())
+	}
 
 	log.Infof("Setting up sandbox chroot in %q", chroot)
 

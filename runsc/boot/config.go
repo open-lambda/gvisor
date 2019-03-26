@@ -178,6 +178,8 @@ type Config struct {
 	// LogPackets indicates that all network packets should be logged.
 	LogPackets bool
 
+	PackageFD int
+
 	// Platform is the platform to run on.
 	Platform PlatformType
 

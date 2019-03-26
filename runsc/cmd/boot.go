@@ -45,6 +45,8 @@ type Boot struct {
 	// deviceFD is the file descriptor for the platform device file.
 	deviceFD int
 
+	packageFD int
+
 	// ioFDs is the list of FDs used to connect to FS gofers.
 	ioFDs intFlags
 
@@ -215,12 +217,14 @@ func (b *Boot) Execute(_ context.Context, f *flag.FlagSet, args ...interface{}) 
 		ControllerFD: b.controllerFD,
 		DeviceFD:     b.deviceFD,
 		GoferFDs:     b.ioFDs.GetArray(),
+		PackageFD:		conf.PackageFD,
 		StdioFDs:     b.stdioFDs.GetArray(),
 		Console:      b.console,
 		NumCPU:       b.cpuNum,
 		TotalMem:     b.totalMem,
 		UserLogFD:    b.userLogFD,
 	}
+	log.Infof("packageFD: %v", bootArgs.PackageFD)
 	l, err := boot.New(bootArgs)
 	if err != nil {
 		Fatalf("creating loader: %v", err)

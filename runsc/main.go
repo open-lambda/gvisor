@@ -50,6 +50,7 @@ var (
 	logFD          = flag.Int("log-fd", -1, "file descriptor to log to.  If set, the 'log' flag is ignored.")
 	debugLogFD     = flag.Int("debug-log-fd", -1, "file descriptor to write debug logs to.  If set, the 'debug-log-dir' flag is ignored.")
 	debugLogFormat = flag.String("debug-log-format", "text", "log format: text (default), json, or json-k8s")
+	packageFD     = flag.Int("package-fd", -1, "file descriptor to python packages")
 
 	// Debugging flags: strace related
 	strace         = flag.Bool("strace", false, "enable strace")
@@ -142,6 +143,7 @@ func main() {
 		Overlay:        *overlay,
 		Network:        netType,
 		LogPackets:     *logPackets,
+		PackageFD:			*packageFD,
 		Platform:       platformType,
 		Strace:         *strace,
 		StraceLogSize:  *straceLogSize,
@@ -158,6 +160,11 @@ func main() {
 	if *debug {
 		log.SetLevel(log.Debug)
 	}
+	/*
+	if *packageFD > 0 {
+		cmd.Fatalf("packageFD got!!! %v", *packageFD)
+	}
+	*/
 
 	var logFile io.Writer = os.Stderr
 	if *logFD > -1 {
@@ -222,6 +229,7 @@ func main() {
 	log.Infof("\t\tFileAccess: %v, overlay: %t", conf.FileAccess, conf.Overlay)
 	log.Infof("\t\tNetwork: %v, logging: %t", conf.Network, conf.LogPackets)
 	log.Infof("\t\tStrace: %t, max size: %d, syscalls: %s", conf.Strace, conf.StraceLogSize, conf.StraceSyscalls)
+	log.Infof("\t\tPackageFD: %v", *packageFD)
 	log.Infof("***************************")
 
 	// Call the subcommand and pass in the configuration.

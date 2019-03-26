@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"io/ioutil"
 	gtime "time"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -81,6 +82,8 @@ type Loader struct {
 	console bool
 
 	watchdog *watchdog.Watchdog
+
+	packageFD int
 
 	// stdioFDs contains stdin, stdout, and stderr.
 	stdioFDs []int
@@ -157,6 +160,9 @@ type Args struct {
 	// GoferFDs is an array of FDs used to connect with the Gofer.
 	GoferFDs []int
 	// StdioFDs is the stdio for the application.
+
+	PackageFD int
+
 	StdioFDs []int
 	// Console is set to true if using TTY.
 	Console bool
@@ -303,6 +309,7 @@ func New(args Args) (*Loader, error) {
 		watchdog:     watchdog,
 		spec:         args.Spec,
 		goferFDs:     args.GoferFDs,
+		packageFD:    args.PackageFD,
 		stdioFDs:     args.StdioFDs,
 		rootProcArgs: procArgs,
 		sandboxID:    args.ID,
@@ -452,6 +459,16 @@ func (l *Loader) run() error {
 		if err := stack.Configure(); err != nil {
 			return err
 		}
+	}
+
+	files, err := ioutil.ReadDir("/")
+
+	if err != nil {
+		return fmt.Errorf("os_module test err:: %v", err)
+	}
+
+	for _, f := range files {
+		log.Debugf("os_module files: " + f.Name())
 	}
 
 	l.mu.Lock()

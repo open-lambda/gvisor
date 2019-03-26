@@ -17,10 +17,12 @@ package boot
 import (
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	// Include filesystem types that OCI spec might mount.
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/dev"
@@ -190,7 +192,7 @@ func createRootMount(ctx context.Context, spec *specs.Spec, conf *Config, fds *f
 	// We need to overlay the root on top of a ramfs with stub directories
 	// for submount paths.  "/dev" "/sys" "/proc" and "/tmp" are always
 	// mounted even if they are not in the spec.
-	submounts := append(subtargets("/", mounts), "/dev", "/sys", "/proc", "/tmp")
+	submounts := append(subtargets("/", mounts), "/dev", "/sys", "/proc", "/tmp", "/ram_packages")
 	rootInode, err = addSubmountOverlay(ctx, rootInode, submounts)
 	if err != nil {
 		return nil, fmt.Errorf("adding submount overlay: %v", err)
@@ -280,6 +282,10 @@ func mountSubmounts(ctx context.Context, conf *Config, mns *fs.MountNamespace, r
 
 	if err := mountTmp(ctx, conf, mns, root, fds, mounts); err != nil {
 		return fmt.Errorf("mount submount %q: %v", "tmp", err)
+	}
+
+	if err := mountPackage(ctx, conf, mns, root, fds, mounts); err != nil {
+		return fmt.Errorf("mount submount %q: %v", "ram_packages", err)
 	}
 
 	if !fds.empty() {
@@ -706,6 +712,82 @@ func destroyContainerFS(ctx context.Context, cid string, k *kernel.Kernel) error
 	return nil
 }
 
+func mountPackage(ctx context.Context, conf *Config, mns *fs.MountNamespace, root *fs.Dirent, fds *fdDispenser, mounts []specs.Mount) error {
+	for _, m := range mounts {
+		if filepath.Clean(m.Destination) == "/ram_packages" {
+			log.Debugf("Explict %q mount found, skipping internal tmpfs, mount: %+v", "/tmp", m)
+			return nil
+		}
+	}
+
+	maxTraversals := uint(0)
+	tmp, err := mns.FindInode(ctx, root, root, "ram_packages", &maxTraversals)
+	switch err {
+		case nil:
+			// Found '/ram_packages' in filesystem, check if it's empty.
+			defer tmp.DecRef()
+			f, err := tmp.Inode.GetFile(ctx, tmp, fs.FileFlags{Read: true, Directory: true})
+			if err != nil {
+				return err
+			}
+			defer f.DecRef()
+			serializer := &fs.CollectEntriesSerializer{}
+			if err := f.Readdir(ctx, serializer); err != nil {
+				return err
+			}
+			// If more than "." and ".." is found, skip internal tmpfs to prevent hiding
+			// existing files.
+			if len(serializer.Order) > 2 {
+				log.Infof("Skipping internal tmpfs on top %q, because it's not empty", "/ram_packages")
+				return nil
+			}
+			log.Infof("Mounting internal tmpfs on top of empty %q", "/ram_packages")
+			fallthrough
+
+		case syserror.ENOENT:
+			// No '/tmp' found (or fallthrough from above). Safe to mount internal
+			// tmpfs.
+			tmpMount := specs.Mount{
+				Type:        tmpfs,
+				Destination: "/ram_packages",
+			}
+			inode, dirent, err_final := mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
+			if err_final != nil {
+				return err_final
+			}
+			defer dirent.DecRef()
+			// _, _, err_final := mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
+			if inode != nil && dirent != nil {
+				//file_source := "/home/gvisor/test.txt"
+				start := time.Now()
+				if conf.PackageFD > 0 {
+					name := "packages.tar"
+					file_hd, err := inode.Create(ctx, dirent, name, fs.FileFlags{Read: true, Write: true}, fs.FilePermissions{User: fs.PermMask{Read: true, Write: true}})
+					defer file_hd.DecRef()
+					if err == nil {
+						if file_hd == nil {
+							log.Infof("file_handler is nil!!!")
+						}
+						w := &fs.FileWriter{ctx, file_hd}
+						f := os.NewFile(uintptr(conf.PackageFD), "package file")
+						r := io.Reader(f)
+						io.Copy(w, r)
+					} else {
+						log.Infof("Can't create hello_world file when accessing inode.")
+					}
+					log.Infof("package.tar time: %s", time.Since(start))
+				} else {
+					log.Infof("Can't create package.tar file.")
+				}
+			}
+		return err_final
+
+		default:
+			return err
+		}
+	}
+
+
 // mountTmp mounts an internal tmpfs at '/tmp' if it's safe to do so.
 // Technically we don't have to mount tmpfs at /tmp, as we could just rely on
 // the host /tmp, but this is a nice optimization, and fixes some apps that call
@@ -754,25 +836,36 @@ func mountTmp(ctx context.Context, conf *Config, mns *fs.MountNamespace, root *f
 			Type:        tmpfs,
 			Destination: "/tmp",
 		}
-		inode, dirent, err_final := mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
+		_, dirent, err_final := mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
+		defer dirent.DecRef()
+		// _, _, err_final := mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
+		/*
 		if inode != nil && dirent != nil {
-			name := "hello_world"
-			file_hd, err := inode.Create(ctx, dirent, name, fs.FileFlags{Read: true, Write: true}, fs.FilePermissions{User: fs.PermMask{Read: true, Write: true}})
-			if err == nil {
-				if file_hd == nil {
-					log.Infof("file_handler is nil!!!")
+			//file_source := "/home/gvisor/test.txt"
+			start := time.Now()
+			if conf.PackageFD > 0 {
+				name := "packages.tar"
+				file_hd, err := inode.Create(ctx, dirent, name, fs.FileFlags{Read: true, Write: true}, fs.FilePermissions{User: fs.PermMask{Read: true, Write: true}})
+				defer file_hd.DecRef()
+				if err == nil {
+					if file_hd == nil {
+						log.Infof("file_handler is nil!!!")
+					}
+					w := &fs.FileWriter{ctx, file_hd}
+					f := os.NewFile(uintptr(conf.PackageFD), "package file")
+					r := io.Reader(f)
+					io.Copy(w, r)
+
+				} else {
+					log.Infof("Can't create hello_world file when accessing inode.")
 				}
-				r := strings.NewReader("some io. Reader stream to be read\n")
-				w := &fs.FileWriter{ctx, file_hd}
-				io.Copy(w, r)
-				file_hd.DecRef()
+				log.Infof("package.tar time: %s", time.Since(start))
 			} else {
-				log.Infof("Can't create hello_world file when accessing inode.")
+				log.Infof("Can't create package.tar file.")
 			}
-			dirent.DecRef()
-		} else {
-			log.Infof("Can't create hello_world file.")
 		}
+		*/
+
 		return err_final
 
 	default:
