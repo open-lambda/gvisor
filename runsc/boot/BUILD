@@ -39,6 +39,7 @@ go_library(
         "//pkg/sentry/fs/dev",
         "//pkg/sentry/fs/gofer",
         "//pkg/sentry/fs/host",
+        "//pkg/sentry/fs/imgfs",
         "//pkg/sentry/fs/proc",
         "//pkg/sentry/fs/ramfs",
         "//pkg/sentry/fs/sys",

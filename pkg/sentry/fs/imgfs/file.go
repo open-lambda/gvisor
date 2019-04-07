@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package host
+package imgfs
 
 import (
-	"fmt"
-	"syscall"
+	//"fmt"
+	//"syscall"
 
 	"gvisor.googlesource.com/gvisor/pkg/fd"
 	"gvisor.googlesource.com/gvisor/pkg/fdnotifier"
-	"gvisor.googlesource.com/gvisor/pkg/log"
+	//"gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/pkg/secio"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
@@ -49,6 +49,23 @@ type fileOperations struct {
 	dirCursor string
 }
 
+/*
+type imgFileOperations struct {
+	waiter.AlwaysReady   `state:"nosave"`
+	fsutil.NoopRelease   `state:"nosave"`
+	fsutil.GenericSeek   `state:"nosave"`
+	fsutil.NotDirReaddir `state:"nosave"`
+	fsutil.NoopFsync     `state:"nosave"`
+	fsutil.NoopFlush     `state:"nosave"`
+	fsutil.NoIoctl       `state:"nosave"`
+
+	// iops is the InodeOperations of a regular tmpfs file. It is
+	// guaranteed to be the same as file.Dirent.Inode.InodeOperations,
+	// see operations that take fs.File below.
+	iops *fileInodeOperations
+}
+*/
+
 // fileOperations implements fs.FileOperations.
 var _ fs.FileOperations = (*fileOperations)(nil)
 
@@ -58,6 +75,7 @@ var _ fs.FileOperations = (*fileOperations)(nil)
 // The returned File cannot be saved, since there is no guarantee that the same
 // FD will exist or represent the same file at time of restore. If such a
 // guarantee does exist, use ImportFile instead.
+/*
 func NewFile(ctx context.Context, fd int, mounter fs.FileOwner) (*fs.File, error) {
 	return newFileFromDonatedFD(ctx, fd, mounter, false, false)
 }
@@ -74,8 +92,8 @@ func newFileFromDonatedFD(ctx context.Context, donated int, mounter fs.FileOwner
 		return nil, err
 	}
 
-	msrc := newMountSource(ctx, "/", mounter, &Filesystem{}, fs.MountSourceFlags{}, false /* dontTranslateOwnership */)
-	inode, err := newInode(ctx, msrc, donated, false /* not savable */ , true /* donated */)
+	msrc := newMountSource(ctx, "/", mounter, &Filesystem{}, fs.MountSourceFlags{}, false)
+	inode, err := newInode(ctx, msrc, donated, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +104,7 @@ func newFileFromDonatedFD(ctx context.Context, donated int, mounter fs.FileOwner
 	defer dirent.DecRef()
 	return newFile(ctx, dirent, flags, iops), nil
 }
+
 
 func fileFlagsFromDonatedFD(donated int) (fs.FileFlags, error) {
 	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(donated), syscall.F_GETFL, 0)
@@ -103,6 +122,7 @@ func fileFlagsFromDonatedFD(donated int) (fs.FileFlags, error) {
 		Write:       accmode == syscall.O_WRONLY || accmode == syscall.O_RDWR,
 	}, nil
 }
+*/
 
 // newFile returns a new fs.File.
 func newFile(ctx context.Context, dirent *fs.Dirent, flags fs.FileFlags, iops *inodeOperations) *fs.File {
@@ -113,6 +133,13 @@ func newFile(ctx context.Context, dirent *fs.Dirent, flags fs.FileFlags, iops *i
 	}
 	return fs.NewFile(ctx, dirent, flags, &fileOperations{iops: iops})
 }
+
+// EventRegister implements waiter.Waitable.EventRegister.
+func (f *fileOperations) EventRegister(e *waiter.Entry, mask waiter.EventMask) {}
+
+// EventUnregister implements waiter.Waitable.EventUnregister.
+func (f *fileOperations) EventUnregister(e *waiter.Entry) {}
+
 
 // Readiness uses the poll() syscall to check the status of the underlying FD.
 func (f *fileOperations) Readiness(mask waiter.EventMask) waiter.EventMask {
@@ -128,6 +155,10 @@ func (f *fileOperations) Readdir(ctx context.Context, file *fs.File, serializer 
 		DirCursor:  &f.dirCursor,
 	}
 	return fs.DirentReaddir(ctx, file.Dirent, f, root, dirCtx, file.Offset())
+}
+
+func (f *fileOperations) IterateDir(ctx context.Context, dirCtx *fs.DirCtx, offset int) (int, error) {
+	return offset, nil
 }
 
 // Write implements fs.FileOperations.Write.

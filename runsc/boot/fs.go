@@ -28,6 +28,7 @@ import (
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/dev"
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/gofer"
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/host"
+	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/imgfs"
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/proc"
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/sys"
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/tmpfs"
@@ -61,6 +62,7 @@ const (
 	bind     = "bind"
 	devpts   = "devpts"
 	devtmpfs = "devtmpfs"
+	imgfs    = "imgfs"
 	proc     = "proc"
 	sysfs    = "sysfs"
 	tmpfs    = "tmpfs"
@@ -163,6 +165,11 @@ func compileMounts(spec *specs.Spec) []specs.Mount {
 		})
 	}
 
+	mandatoryMounts = append(mandatoryMounts, specs.Mount{
+		Type:        imgfs,
+		Destination: "/img",
+	})
+
 	// The mandatory mounts should be ordered right after the root, in case
 	// there are submounts of these mandatory mounts already in the spec.
 	mounts = append(mounts[:0], append(mandatoryMounts, mounts[0:]...)...)
@@ -192,7 +199,7 @@ func createRootMount(ctx context.Context, spec *specs.Spec, conf *Config, fds *f
 	// We need to overlay the root on top of a ramfs with stub directories
 	// for submount paths.  "/dev" "/sys" "/proc" and "/tmp" are always
 	// mounted even if they are not in the spec.
-	submounts := append(subtargets("/", mounts), "/dev", "/sys", "/proc", "/tmp", "/ram_packages")
+	submounts := append(subtargets("/", mounts), "/dev", "/sys", "/proc", "/tmp", "/ram_packages", "/img")
 	rootInode, err = addSubmountOverlay(ctx, rootInode, submounts)
 	if err != nil {
 		return nil, fmt.Errorf("adding submount overlay: %v", err)
@@ -258,6 +265,10 @@ func getMountNameAndOptions(conf *Config, m specs.Mount, fds *fdDispenser) (stri
 		opts = p9MountOptions(fd, FileAccessShared)
 		// If configured, add overlay to all writable mounts.
 		useOverlay = conf.Overlay && !mountFlags(m.Options).ReadOnly
+
+	case imgfs:
+		fsName = m.Type
+		opts = []string{"packageFD=" + strconv.Itoa(conf.PackageFD)}
 
 	default:
 		// TODO: Support all the mount types and make this a
@@ -760,13 +771,15 @@ func mountPackage(ctx context.Context, conf *Config, mns *fs.MountNamespace, roo
 			if inode != nil && dirent != nil {
 				//file_source := "/home/gvisor/test.txt"
 				start := time.Now()
-				if conf.PackageFD > 0 {
-					name := "packages.tar"
+				preload:= false
+				// disable now
+				if conf.PackageFD > 0 && preload{
+					name := "packages.txt"
 					file_hd, err := inode.Create(ctx, dirent, name, fs.FileFlags{Read: true, Write: true}, fs.FilePermissions{User: fs.PermMask{Read: true, Write: true}})
 					defer file_hd.DecRef()
 					if err == nil {
 						if file_hd == nil {
-							log.Infof("file_handler is nil!!!")
+							log.Infof("package file_handler is nil.")
 						}
 						w := &fs.FileWriter{ctx, file_hd}
 						f := os.NewFile(uintptr(conf.PackageFD), "package file")

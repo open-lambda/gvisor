@@ -324,7 +324,7 @@ func (s *Sandbox) createSandboxProcess(spec *specs.Spec, conf *boot.Config, bund
 		nextFD++
 	}
 
-	packageFile, err := os.Open("/tmp/packages.tar")
+	packageFile, err := os.Open("/tmp/packages.txt")
 	if err != nil {
 		return fmt.Errorf("opening package file: %v", err)
 	}

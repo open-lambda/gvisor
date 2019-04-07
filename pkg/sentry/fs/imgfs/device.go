@@ -18,8 +18,5 @@ import (
 	"gvisor.googlesource.com/gvisor/pkg/sentry/device"
 )
 
-// hostFileDevice is the host file virtual device.
-var hostFileDevice = device.NewAnonMultiDevice()
-
-// hostPipeDevice is the host pipe virtual device.
-var hostPipeDevice = device.NewAnonDevice()
+// imgfsFileDevice is the host file virtual device.
+var imgfsFileDevice = device.NewAnonDevice()

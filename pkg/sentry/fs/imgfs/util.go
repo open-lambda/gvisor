@@ -21,7 +21,7 @@ import (
 
 	"gvisor.googlesource.com/gvisor/pkg/abi/linux"
 	"gvisor.googlesource.com/gvisor/pkg/log"
-	"gvisor.googlesource.com/gvisor/pkg/sentry/device"
+	//"gvisor.googlesource.com/gvisor/pkg/sentry/device"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/kernel/auth"
 	ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
@@ -97,21 +97,15 @@ func wouldBlock(s *syscall.Stat_t) bool {
 
 func stableAttr(s *syscall.Stat_t) fs.StableAttr {
 	return fs.StableAttr{
-		Type:     nodeType(s),
-		DeviceID: hostFileDevice.DeviceID(),
-		InodeID: hostFileDevice.Map(device.MultiDeviceKey{
-			Device: s.Dev,
-			Inode:  s.Ino,
-		}),
+		Type:     fs.RegularFile,
+		DeviceID: imgfsFileDevice.DeviceID(),
+		InodeID: s.Ino,
 		BlockSize: int64(s.Blksize),
 	}
 }
 
 func owner(mo *superOperations, s *syscall.Stat_t) fs.FileOwner {
 	// User requested no translation, just return actual owner.
-	if mo.dontTranslateOwnership {
-		return fs.FileOwner{auth.KUID(s.Uid), auth.KGID(s.Gid)}
-	}
 
 	// Show only IDs relevant to the sandboxed task. I.e. if we not own the
 	// file, no sandboxed task can own the file. In that case, we

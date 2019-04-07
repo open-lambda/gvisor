@@ -18,15 +18,13 @@ package imgfs
 
 import (
 	"fmt"
-	"path"
-	"path/filepath"
 	"strconv"
-	"strings"
 
-	"gvisor.googlesource.com/gvisor/pkg/log"
+	// "gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs/ramfs"
+	"gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 )
 
@@ -79,41 +77,54 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 
 	// Grab the packageFD if one was specified.
 	if packageFD, ok := options[packageFDKey]; ok {
-		f.packageFD = strconv.ParseInt(packageFD, 8, 32)
+		v, err := strconv.ParseInt(packageFD, 10, 32)
+		if (err != nil) {
+			return nil, fmt.Errorf("cannot convert packageFD id to int: %v", err)
+		}
+		f.packageFD = int(v)
 		delete(options, packageFDKey)
 	}
+
+	if (f.packageFD <= 0) {
+		return nil, fmt.Errorf("invalid packageFD when mounting imgfs: %v", f.packageFD)
+	}
+
+	log.Infof("imgfs.packageFD: %v", f.packageFD)
 
 	// Fail if the caller passed us more options than we know about.
 	if len(options) > 0 {
 		return nil, fmt.Errorf("unsupported mount options: %v", options)
 	}
 
-	// The mounting EUID/EGID will be cached by this file system. This will
-	// be used to assign ownership to files that we own.
-	owner := fs.FileOwnerFromContext(ctx)
-
-	// Construct the host file system mount and inode.
-	msrc := newMountSource(ctx, rootPath, owner, f, flags, false)
-	contents := map[string]*fs.Inode{
-		"illusion":     newInode(ctx, msrc, f.packageFD, false /* saveable */, false /* donated */),
+	// Construct img file system mount and inode.
+	msrc := newMountSource(ctx, fs.RootOwner, f, flags)
+	inode, err := newInode(ctx, msrc, f.packageFD, false /* saveable */, false /* donated */)
+	if err != nil {
+		return nil, fmt.Errorf("package FD create failed.")
 	}
-	iops := ramfs.NewDir(ctx, contents, fs.RootOwner, fs.FilePermsFromMode(0555))
-	return fs.NewInode(iops, msrc, fs.StableAttr{
-		DeviceID:  devDevice.DeviceID(),
-		InodeID:   devDevice.NextIno(),
+	contents := map[string]*fs.Inode{
+		"illusion": inode,
+	}
+	d := ramfs.NewDir(ctx, contents, fs.RootOwner, fs.FilePermsFromMode(0555))
+	newinode := fs.NewInode(d, msrc, fs.StableAttr{
+		DeviceID:  imgfsFileDevice.DeviceID(),
+		InodeID:   imgfsFileDevice.NextIno(),
 		BlockSize: usermem.PageSize,
 		Type:      fs.Directory,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("cannot create new inode for imgfs root")
+	}
+	return newinode, nil
 }
 
 // newMountSource constructs a new host fs.MountSource
 // relative to a root path. The root should match the mount point.
-func newMountSource(ctx context.Context, root string, mounter fs.FileOwner, filesystem fs.Filesystem, flags fs.MountSourceFlags, dontTranslateOwnership bool) *fs.MountSource {
+
+func newMountSource(ctx context.Context, mounter fs.FileOwner, filesystem fs.Filesystem, flags fs.MountSourceFlags) *fs.MountSource {
 	return fs.NewMountSource(&superOperations{
-		root:                   root,
 		inodeMappings:          make(map[uint64]string),
 		mounter:                mounter,
-		dontTranslateOwnership: dontTranslateOwnership,
 	}, filesystem, flags)
 }
 

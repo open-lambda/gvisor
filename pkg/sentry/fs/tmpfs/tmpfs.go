@@ -27,7 +27,6 @@ import (
 	"gvisor.googlesource.com/gvisor/pkg/sentry/usage"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 	"gvisor.googlesource.com/gvisor/pkg/syserror"
-	"gvisor.googlesource.com/gvisor/pkg/log"
 )
 
 var fsInfo = fs.Info{
@@ -83,7 +82,7 @@ var _ fs.InodeOperations = (*Dir)(nil)
 
 // NewDir returns a new directory.
 func NewDir(ctx context.Context, contents map[string]*fs.Inode, owner fs.FileOwner, perms fs.FilePermissions, msrc *fs.MountSource) *fs.Inode {
-	
+
 	d := &Dir{
 		ramfsDir: ramfs.NewDir(ctx, contents, owner, perms),
 		kernel:   kernel.KernelFromContext(ctx),
