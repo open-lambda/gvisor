@@ -40,6 +40,12 @@ type descriptor struct {
 	// return EWOULDBLOCK for operations that would block.
 	wouldBlock bool
 
+	mappedArea []bytes
+
+	offsetBegin int64
+
+	offsetEnd int64
+
 	// value is the wrapped host fd. It is never saved or restored
 	// directly. How it is restored depends on whether it was
 	// donated and the fs.MountSource it was originally

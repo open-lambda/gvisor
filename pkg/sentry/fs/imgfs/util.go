@@ -28,38 +28,6 @@ import (
 	"gvisor.googlesource.com/gvisor/pkg/syserror"
 )
 
-func open(parent *inodeOperations, name string) (int, error) {
-	if parent == nil && !path.IsAbs(name) {
-		return -1, syserror.EINVAL
-	}
-	name = path.Clean(name)
-
-	// Don't follow through symlinks.
-	flags := syscall.O_NOFOLLOW
-
-	if fd, err := openAt(parent, name, flags|syscall.O_RDWR, 0); err == nil {
-		return fd, nil
-	}
-	// Retry as read-only.
-	if fd, err := openAt(parent, name, flags|syscall.O_RDONLY, 0); err == nil {
-		return fd, nil
-	}
-
-	// Retry as write-only.
-	if fd, err := openAt(parent, name, flags|syscall.O_WRONLY, 0); err == nil {
-		return fd, nil
-	}
-
-	// Retry as a symlink, by including O_PATH as an option.
-	fd, err := openAt(parent, name, linux.O_PATH|flags, 0)
-	if err == nil {
-		return fd, nil
-	}
-
-	// Everything failed.
-	return -1, err
-}
-
 func openAt(parent *inodeOperations, name string, flags int, perm linux.FileMode) (int, error) {
 	if parent == nil {
 		return syscall.Open(name, flags, uint32(perm))
@@ -67,32 +35,8 @@ func openAt(parent *inodeOperations, name string, flags int, perm linux.FileMode
 	return syscall.Openat(parent.fileState.FD(), name, flags, uint32(perm))
 }
 
-func nodeType(s *syscall.Stat_t) fs.InodeType {
-	switch x := (s.Mode & syscall.S_IFMT); x {
-	case syscall.S_IFLNK:
-		return fs.Symlink
-	case syscall.S_IFIFO:
-		return fs.Pipe
-	case syscall.S_IFCHR:
-		return fs.CharacterDevice
-	case syscall.S_IFBLK:
-		return fs.BlockDevice
-	case syscall.S_IFSOCK:
-		return fs.Socket
-	case syscall.S_IFDIR:
-		return fs.Directory
-	case syscall.S_IFREG:
-		return fs.RegularFile
-	default:
-		// This shouldn't happen, but just in case...
-		log.Warningf("unknown host file type %d: assuming regular", x)
-		return fs.RegularFile
-	}
-}
-
 func wouldBlock(s *syscall.Stat_t) bool {
-	typ := nodeType(s)
-	return typ == fs.Pipe || typ == fs.Socket || typ == fs.CharacterDevice
+	return false
 }
 
 func stableAttr(s *syscall.Stat_t) fs.StableAttr {

@@ -32,6 +32,41 @@ import (
 	"gvisor.googlesource.com/gvisor/pkg/waiter"
 )
 
+type ImgReader struct {
+	mapArea []bytes
+	offsetBegin int64
+	offsetEnd int64
+	currentOffset int64
+}
+
+var _ io.Reader = (*ImgReader)(nil)
+var _ io.ReaderAt = (*ImgReader)(nil)
+
+func NewImgReader(mapArea []bytes, offsetBegin int64, offsetEnd int64) *ImgReader {
+	return &ImgReader{mapArea, offsetBegin, offsetEnd, int64(0)}
+}
+
+func (r *ImgReader) Read(b []byte) (int, error) {
+	n, err := ReadAt(b, r.currentOffset)
+	r.currentOffset += n
+	return n, err
+}
+
+func (r *ImgReader) ReadAt(b []byte, off int64) (c int, err error) {
+	if off >= r.offsetEnd || off < 0 {
+		return 0, io.EOF
+	}
+	sz := cap(b)
+	copyEnd := off + sz
+	if copyEnd > r.offsetEnd {
+		copyEnd = r.offsetEnd
+	}
+	n := copyEnd - off
+	if n > 0 {
+		copy(mapArea[off : copyEnd], b)
+	}
+	return n, nil
+}
 // inodeOperations implements fs.InodeOperations for an fs.Inodes backed
 // by a host file descriptor.
 //
@@ -91,6 +126,10 @@ type inodeFileState struct {
 	// failures. S/R is transparent to Sentry and the latter will continue
 	// using its cached values after restore.
 	savedUAttr *fs.UnstableAttr
+
+	children map[string]*fs.Inode
+
+	reader ImgReader
 }
 
 // ReadToBlocksAt implements fsutil.CachedFileObject.ReadToBlocksAt.
@@ -105,12 +144,12 @@ func (i *inodeFileState) ReadToBlocksAt(ctx context.Context, dsts safemem.BlockS
 	// so the buffering performed by FromIOReader is unnecessary.
 	//
 	// This also applies to the write path below.
-	return safemem.FromIOReader{secio.NewOffsetReader(fd.NewReadWriter(i.FD()), int64(offset))}.ReadToBlocks(dsts)
+	return safemem.FromIOReader{secio.NewOffsetReader(i.reader, int64(offset))}.ReadToBlocks(dsts)
 }
 
 // WriteFromBlocksAt implements fsutil.CachedFileObject.WriteFromBlocksAt.
 func (i *inodeFileState) WriteFromBlocksAt(ctx context.Context, srcs safemem.BlockSeq, offset uint64) (uint64, error) {
-	return safemem.FromIOWriter{secio.NewOffsetWriter(fd.NewReadWriter(i.FD()), int64(offset))}.WriteFromBlocks(srcs)
+	return 0, syserror.EPERM
 }
 
 // SetMaskedAttributes implements fsutil.CachedFileObject.SetMaskedAttributes.
@@ -225,44 +264,15 @@ func (i *inodeOperations) Release(context.Context) {
 
 // Lookup implements fs.InodeOperations.Lookup.
 func (i *inodeOperations) Lookup(ctx context.Context, dir *fs.Inode, name string) (*fs.Dirent, error) {
-	// Get a new FD relative to i at name.
-	fd, err := open(i, name)
-	if err != nil {
-		if err == syserror.ENOENT {
-			return nil, syserror.ENOENT
-		}
-		return nil, err
+	if inode, ok := i.chilren[p]; ok {
+		return inode, nil
 	}
-
-	inode, err := newInode(ctx, dir.MountSource, fd, false /* saveable */, false /* donated */)
-	if err != nil {
-		return nil, err
-	}
-
-	// Return the fs.Dirent.
-	return fs.NewDirent(inode, name), nil
+	return nil, syserror.ENOENT
 }
 
 // Create implements fs.InodeOperations.Create.
 func (i *inodeOperations) Create(ctx context.Context, dir *fs.Inode, name string, flags fs.FileFlags, perm fs.FilePermissions) (*fs.File, error) {
-	// Create a file relative to i at name.
-	//
-	// N.B. We always open this file O_RDWR regardless of flags because a
-	// future GetFile might want more access. Open allows this regardless
-	// of perm.
-	fd, err := openAt(i, name, syscall.O_RDWR|syscall.O_CREAT|syscall.O_EXCL, perm.LinuxMode())
-	if err != nil {
-		return nil, err
-	}
-
-	inode, err := newInode(ctx, dir.MountSource, fd, false /* saveable */, false /* donated */)
-	if err != nil {
-		return nil, err
-	}
-
-	d := fs.NewDirent(inode, name)
-	defer d.DecRef()
-	return inode.GetFile(ctx, d, flags)
+	return nil, syserror.EPERM
 }
 
 // CreateDirectory implements fs.InodeOperations.CreateDirectory.

@@ -207,9 +207,6 @@ func (f *fileOperations) Fsync(ctx context.Context, file *fs.File, start int64, 
 
 // Flush implements fs.FileOperations.Flush.
 func (f *fileOperations) Flush(context.Context, *fs.File) error {
-	// This is a no-op because flushing the resource backing this
-	// file would mean closing it. We can't do that because other
-	// open files may depend on the backing host FD.
 	return nil
 }
 
