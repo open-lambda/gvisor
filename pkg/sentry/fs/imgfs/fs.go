@@ -17,8 +17,12 @@
 package imgfs
 
 import (
+	"bytes"
+	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 	"strconv"
+	"syscall"
 
 	// "gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
@@ -45,6 +49,12 @@ const (
 type Filesystem struct {
 	// whitelist is a set of host paths to whitelist.
 	packageFD int
+}
+
+type fileMetadata struct {
+	Begin int64
+	End int64
+	Name string
 }
 
 var _ fs.Filesystem = (*Filesystem)(nil)
@@ -98,19 +108,15 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 
 	// Construct img file system mount and inode.
 	msrc := newMountSource(ctx, fs.RootOwner, f, flags)
-	// need to work on
-	inode, err := newInode(ctx, msrc, f.packageFD, false /* saveable */, false /* donated */)
+
+	var s syscall.Stat_t
+	err := syscall.Fstat(int(f.packageFD), &s)
 	if err != nil {
-		return nil, fmt.Errorf("package FD create failed.")
+		return nil, fmt.Errorf("unable to stat package file: %v", err)
 	}
-
-	contents := map[string]*fs.Inode{
-		"illusion": inode,
-	}
-
-	d := ramfs.NewDir(ctx, contents, fs.RootOwner, fs.FilePermsFromMode(0555))
-
-	mmap, err := syscall.Mmap(int(f.PackageFD), 0, length, syscall.PROT_READ, syscall.MAP_SHARED)
+	log.Infof("stat package file size: %v", s.Size)
+	length := int(s.Size)
+	mmap, err := syscall.Mmap(int(f.packageFD), 0, length, syscall.PROT_READ, syscall.MAP_SHARED)
 	if err != nil {
 		return nil, fmt.Errorf("can't mmap the package image file, err: %v", err)
 	}
@@ -122,16 +128,27 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 	}
 	header := mmap[int(n) : length - 10]
 	metadataReader := bytes.NewReader(header)
+	var metadata []fileMetadata
 	dec := gob.NewDecoder(metadataReader)
 	errDec := dec.Decode(&metadata)
 	if errDec != nil {
-		  return fmt.Errorf("can't decode metadata data, err: %v", errDec)
+		  return nil, fmt.Errorf("can't decode metadata data, err: %v", errDec)
 	}
+
+	contents := map[string]*fs.Inode{}
 	for _, v := range metadata {
 		fileBytes := mmap[v.Begin : v.End]
 		fileString := string(fileBytes)
-		fmt.Printf("file: %v, data: %v\n", v.Name, fileString)
+		log.Infof("file: %v, data: %v\n", v.Name, fileString) // TODO: comment it
+		inode, err := newInode(ctx, msrc, v.Begin, v.End, mmap)
+		contents[v.Name] = inode
+		if err != nil {
+			return nil, fmt.Errorf("can't create inode for %v, err: %v", v.Name, err)
+		}
 	}
+
+
+	d := ramfs.NewDir(ctx, contents, fs.RootOwner, fs.FilePermsFromMode(0555))
 
 	newinode := fs.NewInode(d, msrc, fs.StableAttr{
 		DeviceID:  imgfsFileDevice.DeviceID(),

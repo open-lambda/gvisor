@@ -16,16 +16,18 @@ package imgfs
 
 import (
 	"os"
-	"path"
+	//"path"
 	"syscall"
 
 	"gvisor.googlesource.com/gvisor/pkg/abi/linux"
-	"gvisor.googlesource.com/gvisor/pkg/log"
+	//"gvisor.googlesource.com/gvisor/pkg/log"
 	//"gvisor.googlesource.com/gvisor/pkg/sentry/device"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/kernel/auth"
 	ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
 	"gvisor.googlesource.com/gvisor/pkg/syserror"
+	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
+	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 )
 
 func openAt(parent *inodeOperations, name string, flags int, perm linux.FileMode) (int, error) {
@@ -39,12 +41,12 @@ func wouldBlock(s *syscall.Stat_t) bool {
 	return false
 }
 
-func stableAttr(s *syscall.Stat_t) fs.StableAttr {
+func stableAttr() fs.StableAttr {
 	return fs.StableAttr{
 		Type:     fs.RegularFile,
 		DeviceID: imgfsFileDevice.DeviceID(),
-		InodeID: s.Ino,
-		BlockSize: int64(s.Blksize),
+		InodeID: imgfsFileDevice.NextIno(),
+		BlockSize: usermem.PageSize,
 	}
 }
 
@@ -84,16 +86,16 @@ func owner(mo *superOperations, s *syscall.Stat_t) fs.FileOwner {
 	return owner
 }
 
-func unstableAttr(mo *superOperations, s *syscall.Stat_t) fs.UnstableAttr {
+func unstableAttr(ctx context.Context, offsetBegin int64, offsetEnd int64) fs.UnstableAttr {
 	return fs.UnstableAttr{
-		Size:             s.Size,
-		Usage:            s.Blocks * 512,
-		Perms:            fs.FilePermsFromMode(linux.FileMode(s.Mode)),
-		Owner:            owner(mo, s),
-		AccessTime:       ktime.FromUnix(s.Atim.Sec, s.Atim.Nsec),
-		ModificationTime: ktime.FromUnix(s.Mtim.Sec, s.Mtim.Nsec),
-		StatusChangeTime: ktime.FromUnix(s.Ctim.Sec, s.Ctim.Nsec),
-		Links:            s.Nlink,
+		Size:             offsetEnd - offsetBegin,
+		Usage:            offsetEnd - offsetBegin,
+		Perms:            fs.FilePermsFromMode(0555),
+		Owner:            fs.FileOwnerFromContext(ctx),
+		AccessTime:       ktime.NowFromContext(ctx),
+		ModificationTime: ktime.NowFromContext(ctx),
+		StatusChangeTime: ktime.NowFromContext(ctx),
+		Links:            1,
 	}
 }
 

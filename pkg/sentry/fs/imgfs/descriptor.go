@@ -15,12 +15,12 @@
 package imgfs
 
 import (
-	"fmt"
+	//"fmt"
 	//"path"
-	"syscall"
+	//"syscall"
 
-	"gvisor.googlesource.com/gvisor/pkg/fdnotifier"
-	"gvisor.googlesource.com/gvisor/pkg/log"
+	//"gvisor.googlesource.com/gvisor/pkg/fdnotifier"
+	//"gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/pkg/waiter"
 )
 
@@ -28,19 +28,7 @@ import (
 //
 // +stateify savable
 type descriptor struct {
-	// donated is true if the host fd was donated by another process.
-	donated bool
-
-	// If origFD >= 0, it is the host fd that this file was originally created
-	// from, which must be available at time of restore. The FD can be closed
-	// after descriptor is created. Only set if donated is true.
-	origFD int
-
-	// wouldBlock is true if value (below) points to a file that can
-	// return EWOULDBLOCK for operations that would block.
-	wouldBlock bool
-
-	mappedArea []bytes
+	mappedArea []byte
 
 	offsetBegin int64
 
@@ -55,62 +43,18 @@ type descriptor struct {
 
 // newDescriptor returns a wrapped host file descriptor. On success,
 // the descriptor is registered for event notifications with queue.
-func newDescriptor(fd int, donated bool, saveable bool, wouldBlock bool, queue *waiter.Queue) (*descriptor, error) {
-	ownedFD := fd
-	origFD := -1
-	if saveable {
-		var err error
-		ownedFD, err = syscall.Dup(fd)
-		if err != nil {
-			return nil, err
-		}
-		origFD = fd
-	}
-	if wouldBlock {
-		if err := syscall.SetNonblock(ownedFD, true); err != nil {
-			return nil, err
-		}
-		if err := fdnotifier.AddFD(int32(ownedFD), queue); err != nil {
-			return nil, err
-		}
-	}
+func newDescriptor(begin int64, end int64) *descriptor {
 	return &descriptor{
-		donated:    donated,
-		origFD:     origFD,
-		wouldBlock: wouldBlock,
-		value:      ownedFD,
-	}, nil
+		offsetBegin: begin,
+		offsetEnd: end,
+		value:      -1,
+	}
 }
 
 // initAfterLoad initializes the value of the descriptor after Load.
 func (d *descriptor) initAfterLoad(mo *superOperations, id uint64, queue *waiter.Queue) error {
-	if d.donated {
-		var err error
-		d.value, err = syscall.Dup(d.origFD)
-		if err != nil {
-			return fmt.Errorf("failed to dup restored fd %d: %v", d.origFD, err)
-		}
-	} else {
-		d.value = d.origFD
-	}
-	if d.wouldBlock {
-		if err := syscall.SetNonblock(d.value, true); err != nil {
-			return err
-		}
-		if err := fdnotifier.AddFD(int32(d.value), queue); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
 // Release releases all resources held by descriptor.
-func (d *descriptor) Release() {
-	if d.wouldBlock {
-		fdnotifier.RemoveFD(int32(d.value))
-	}
-	if err := syscall.Close(d.value); err != nil {
-		log.Warningf("error closing fd %d: %v", d.value, err)
-	}
-	d.value = -1
-}
+func (d *descriptor) Release() {}

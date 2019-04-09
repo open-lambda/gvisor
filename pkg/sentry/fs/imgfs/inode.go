@@ -15,11 +15,12 @@
 package imgfs
 
 import (
+	"io"
 	"sync"
 	"syscall"
 
 	//"gvisor.googlesource.com/gvisor/pkg/abi/linux"
-	"gvisor.googlesource.com/gvisor/pkg/fd"
+	//"gvisor.googlesource.com/gvisor/pkg/fd"
 	"gvisor.googlesource.com/gvisor/pkg/secio"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
 	//"gvisor.googlesource.com/gvisor/pkg/sentry/device"
@@ -33,7 +34,7 @@ import (
 )
 
 type ImgReader struct {
-	mapArea []bytes
+	mapArea []byte
 	offsetBegin int64
 	offsetEnd int64
 	currentOffset int64
@@ -42,28 +43,28 @@ type ImgReader struct {
 var _ io.Reader = (*ImgReader)(nil)
 var _ io.ReaderAt = (*ImgReader)(nil)
 
-func NewImgReader(mapArea []bytes, offsetBegin int64, offsetEnd int64) *ImgReader {
+func NewImgReader(mapArea []byte, offsetBegin int64, offsetEnd int64) *ImgReader {
 	return &ImgReader{mapArea, offsetBegin, offsetEnd, int64(0)}
 }
 
-func (r *ImgReader) Read(b []byte) (int, error) {
-	n, err := ReadAt(b, r.currentOffset)
-	r.currentOffset += n
+func (r ImgReader) Read(b []byte) (int, error) {
+	n, err := r.ReadAt(b, r.currentOffset)
+	r.currentOffset += int64(n)
 	return n, err
 }
 
-func (r *ImgReader) ReadAt(b []byte, off int64) (c int, err error) {
+func (r ImgReader) ReadAt(b []byte, off int64) (c int, err error) {
 	if off >= r.offsetEnd || off < 0 {
 		return 0, io.EOF
 	}
 	sz := cap(b)
-	copyEnd := off + sz
+	copyEnd := off + int64(sz)
 	if copyEnd > r.offsetEnd {
 		copyEnd = r.offsetEnd
 	}
-	n := copyEnd - off
+	n := int(copyEnd - off)
 	if n > 0 {
-		copy(mapArea[off : copyEnd], b)
+		copy(r.mapArea[off : copyEnd], b)
 	}
 	return n, nil
 }
@@ -127,9 +128,7 @@ type inodeFileState struct {
 	// using its cached values after restore.
 	savedUAttr *fs.UnstableAttr
 
-	children map[string]*fs.Inode
-
-	reader ImgReader
+	reader *ImgReader
 }
 
 // ReadToBlocksAt implements fsutil.CachedFileObject.ReadToBlocksAt.
@@ -195,44 +194,24 @@ func (i *inodeFileState) FD() int {
 }
 
 func (i *inodeFileState) unstableAttr(ctx context.Context) (fs.UnstableAttr, error) {
-	var s syscall.Stat_t
-	if err := syscall.Fstat(i.FD(), &s); err != nil {
-		return fs.UnstableAttr{}, err
-	}
-	return unstableAttr(i.mops, &s), nil
+	return unstableAttr(ctx, i.descriptor.offsetBegin, i.descriptor.offsetEnd), nil
 }
 
 // inodeOperations implements fs.InodeOperations.
 var _ fs.InodeOperations = (*inodeOperations)(nil)
 
 // newInode returns a new fs.Inode backed by the host FD.
-func newInode(ctx context.Context, msrc *fs.MountSource, fd int, saveable bool, donated bool) (*fs.Inode, error) {
-	// Retrieve metadata.
-	var s syscall.Stat_t
-	err := syscall.Fstat(fd, &s)
-	if err != nil {
-		return nil, err
-	}
-
+func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64, m []byte) (*fs.Inode, error) {
 	fileState := &inodeFileState{
 		mops:  msrc.MountSourceOperations.(*superOperations),
-		sattr: stableAttr(&s),
+		sattr: stableAttr(),
+		reader: NewImgReader(m, begin, end),
 	}
 
 	// Initialize the wrapped host file descriptor.
-	fileState.descriptor, err = newDescriptor(
-		fd,
-		donated,
-		saveable,
-		wouldBlock(&s),
-		&fileState.queue,
-	)
-	if err != nil {
-		return nil, err
-	}
-
+	fileState.descriptor = newDescriptor(begin, end)
 	// Build the fs.InodeOperations.
-	uattr := unstableAttr(msrc.MountSourceOperations.(*superOperations), &s)
+	uattr := unstableAttr(ctx, begin, end)
 	iops := &inodeOperations{
 		fileState:       fileState,
 		cachingInodeOps: fsutil.NewCachingInodeOperations(ctx, fileState, uattr, msrc.Flags.ForcePageCache),
@@ -253,7 +232,7 @@ func (i *inodeOperations) Mappable(inode *fs.Inode) memmap.Mappable {
 // ReturnsWouldBlock returns true if this host FD can return EWOULDBLOCK for
 // operations that would block.
 func (i *inodeOperations) ReturnsWouldBlock() bool {
-	return i.fileState.descriptor.wouldBlock
+	return false
 }
 
 // Release implements fs.InodeOperations.Release.
@@ -264,9 +243,7 @@ func (i *inodeOperations) Release(context.Context) {
 
 // Lookup implements fs.InodeOperations.Lookup.
 func (i *inodeOperations) Lookup(ctx context.Context, dir *fs.Inode, name string) (*fs.Dirent, error) {
-	if inode, ok := i.chilren[p]; ok {
-		return inode, nil
-	}
+	// regular file doesn't need lookup. Dir will use ramfs dir
 	return nil, syserror.ENOENT
 }
 
