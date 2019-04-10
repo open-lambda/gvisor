@@ -773,8 +773,8 @@ func mountPackage(ctx context.Context, conf *Config, mns *fs.MountNamespace, roo
 				start := time.Now()
 				preload:= false
 				// disable now
-				if conf.PackageFD > 0 && preload{
-					name := "packages.txt"
+				if conf.PackageFD > 0 && preload {
+					name := "test.img"
 					file_hd, err := inode.Create(ctx, dirent, name, fs.FileFlags{Read: true, Write: true}, fs.FilePermissions{User: fs.PermMask{Read: true, Write: true}})
 					defer file_hd.DecRef()
 					if err == nil {

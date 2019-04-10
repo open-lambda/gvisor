@@ -107,7 +107,7 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 	}
 
 	// Construct img file system mount and inode.
-	msrc := newMountSource(ctx, fs.RootOwner, f, flags)
+	msrc := fs.NewCachingMountSource(f, flags)
 
 	var s syscall.Stat_t
 	err := syscall.Fstat(int(f.packageFD), &s)
@@ -160,62 +160,6 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 		return nil, fmt.Errorf("cannot create new inode for imgfs root")
 	}
 	return newinode, nil
-}
-
-// newMountSource constructs a new host fs.MountSource
-// relative to a root path. The root should match the mount point.
-
-func newMountSource(ctx context.Context, mounter fs.FileOwner, filesystem fs.Filesystem, flags fs.MountSourceFlags) *fs.MountSource {
-	return fs.NewMountSource(&superOperations{
-		inodeMappings:          make(map[uint64]string),
-		mounter:                mounter,
-	}, filesystem, flags)
-}
-
-// superOperations implements fs.MountSourceOperations.
-//
-// +stateify savable
-type superOperations struct {
-	fs.SimpleMountSourceOperations
-
-	// inodeMappings contains mappings of fs.Inodes associated
-	// with this MountSource to paths under root.
-	inodeMappings map[uint64]string
-
-	// mounter is the cached EUID/EGID that mounted this file system.
-	mounter fs.FileOwner
-}
-
-var _ fs.MountSourceOperations = (*superOperations)(nil)
-
-// ResetInodeMappings implements fs.MountSourceOperations.ResetInodeMappings.
-func (m *superOperations) ResetInodeMappings() {
-	m.inodeMappings = make(map[uint64]string)
-}
-
-// SaveInodeMapping implements fs.MountSourceOperations.SaveInodeMapping.
-func (m *superOperations) SaveInodeMapping(inode *fs.Inode, path string) {
-	// This is very unintuitive. We *CANNOT* trust the inode's StableAttrs,
-	// because overlay copyUp may have changed them out from under us.
-	// So much for "immutable".
-	sattr := inode.InodeOperations.(*inodeOperations).fileState.sattr
-	m.inodeMappings[sattr.InodeID] = path
-}
-
-// Keep implements fs.MountSourceOperations.Keep.
-//
-// TODO: It is possible to change the permissions on a
-// host file while it is in the dirent cache (say from RO to RW), but it is not
-// possible to re-open the file with more relaxed permissions, since the host
-// FD is already open and stored in the inode.
-//
-// Using the dirent LRU cache increases the odds that this bug is encountered.
-// Since host file access is relatively fast anyways, we disable the LRU cache
-// for host fs files.  Once we can properly deal with permissions changes and
-// re-opening host files, we should revisit whether or not to make use of the
-// LRU cache.
-func (*superOperations) Keep(*fs.Dirent) bool {
-	return false
 }
 
 func init() {

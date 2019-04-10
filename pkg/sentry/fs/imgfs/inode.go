@@ -15,381 +15,190 @@
 package imgfs
 
 import (
+	"fmt"
 	"io"
 	"sync"
-	"syscall"
+	"time"
 
-	//"gvisor.googlesource.com/gvisor/pkg/abi/linux"
-	//"gvisor.googlesource.com/gvisor/pkg/fd"
-	"gvisor.googlesource.com/gvisor/pkg/secio"
+	"gvisor.googlesource.com/gvisor/pkg/abi/linux"
+	"gvisor.googlesource.com/gvisor/pkg/metric"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
-	//"gvisor.googlesource.com/gvisor/pkg/sentry/device"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs/fsutil"
+	"gvisor.googlesource.com/gvisor/pkg/sentry/kernel"
+	ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/memmap"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/safemem"
-	"gvisor.googlesource.com/gvisor/pkg/sentry/socket/unix/transport"
+	"gvisor.googlesource.com/gvisor/pkg/sentry/usage"
+	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 	"gvisor.googlesource.com/gvisor/pkg/syserror"
-	"gvisor.googlesource.com/gvisor/pkg/waiter"
 )
-
-type ImgReader struct {
-	mapArea []byte
-	offsetBegin int64
-	offsetEnd int64
-	currentOffset int64
-}
-
-var _ io.Reader = (*ImgReader)(nil)
-var _ io.ReaderAt = (*ImgReader)(nil)
-
-func NewImgReader(mapArea []byte, offsetBegin int64, offsetEnd int64) *ImgReader {
-	return &ImgReader{mapArea, offsetBegin, offsetEnd, int64(0)}
-}
-
-func (r ImgReader) Read(b []byte) (int, error) {
-	n, err := r.ReadAt(b, r.currentOffset)
-	r.currentOffset += int64(n)
-	return n, err
-}
-
-func (r ImgReader) ReadAt(b []byte, off int64) (c int, err error) {
-	if off >= r.offsetEnd || off < 0 {
-		return 0, io.EOF
-	}
-	sz := cap(b)
-	copyEnd := off + int64(sz)
-	if copyEnd > r.offsetEnd {
-		copyEnd = r.offsetEnd
-	}
-	n := int(copyEnd - off)
-	if n > 0 {
-		copy(r.mapArea[off : copyEnd], b)
-	}
-	return n, nil
-}
 // inodeOperations implements fs.InodeOperations for an fs.Inodes backed
 // by a host file descriptor.
 //
 // +stateify savable
-type inodeOperations struct {
-	fsutil.InodeNotVirtual           `state:"nosave"`
-	fsutil.InodeNoExtendedAttributes `state:"nosave"`
+type fileInodeOperations struct {
+	fsutil.InodeGenericChecker `state:"nosave"`
+	fsutil.InodeNoopWriteOut   `state:"nosave"`
+	fsutil.InodeNotDirectory   `state:"nosave"`
+	fsutil.InodeNotSocket      `state:"nosave"`
+	fsutil.InodeNotSymlink     `state:"nosave"`
 
-	// fileState implements fs.CachedFileObject. It exists
-	// to break a circular load dependency between inodeOperations
-	// and cachingInodeOps (below).
-	fileState *inodeFileState `state:"wait"`
+	fsutil.InodeSimpleExtendedAttributes
 
-	// cachedInodeOps implements memmap.Mappable.
-	cachingInodeOps *fsutil.CachingInodeOperations
-
-	// readdirMu protects the file offset on the host FD. This is needed
-	// for readdir because getdents must use the kernel offset, so
-	// concurrent readdirs must be exclusive.
-	//
-	// All read/write functions pass the offset directly to the kernel and
-	// thus don't need a lock.
-	readdirMu sync.Mutex `state:"nosave"`
+	mapArea []byte
+	offsetBegin int64
+	offsetEnd int64
 }
 
-// inodeFileState implements fs.CachedFileObject and otherwise fully
-// encapsulates state that needs to be manually loaded on restore for
-// this file object.
-//
-// This unfortunate structure exists because fs.CachingInodeOperations
-// defines afterLoad and therefore cannot be lazily loaded (to break a
-// circular load dependency between it and inodeOperations). Even with
-// lazy loading, this approach defines the dependencies between objects
-// and the expected load behavior more concretely.
-//
-// +stateify savable
-type inodeFileState struct {
-	// Common file system state.
-	mops *superOperations `state:"wait"`
-
-	// descriptor is the backing host FD.
-	descriptor *descriptor `state:"wait"`
-
-	// Event queue for blocking operations.
-	queue waiter.Queue `state:"zerovalue"`
-
-	// sattr is used to restore the inodeOperations.
-	sattr fs.StableAttr `state:"wait"`
-
-	// savedUAttr is only allocated during S/R. It points to the save-time
-	// unstable attributes and is used to validate restore-time ones.
-	//
-	// Note that these unstable attributes are only used to detect cross-S/R
-	// external file system metadata changes. They may differ from the
-	// cached unstable attributes in cachingInodeOps, as that might differ
-	// from the external file system attributes if there had been WriteOut
-	// failures. S/R is transparent to Sentry and the latter will continue
-	// using its cached values after restore.
-	savedUAttr *fs.UnstableAttr
-
-	reader *ImgReader
+type ImgReader struct {
+	f *fileInodeOperations
+	offset int64
 }
 
-// ReadToBlocksAt implements fsutil.CachedFileObject.ReadToBlocksAt.
-func (i *inodeFileState) ReadToBlocksAt(ctx context.Context, dsts safemem.BlockSeq, offset uint64) (uint64, error) {
-	// TODO: Using safemem.FromIOReader here is wasteful for two
-	// reasons:
-	//
-	// - Using preadv instead of iterated preads saves on host system calls.
-	//
-	// - Host system calls can handle destination memory that would fault in
-	// gr3 (i.e. they can accept safemem.Blocks with NeedSafecopy() == true),
-	// so the buffering performed by FromIOReader is unnecessary.
-	//
-	// This also applies to the write path below.
-	return safemem.FromIOReader{secio.NewOffsetReader(i.reader, int64(offset))}.ReadToBlocks(dsts)
+func NewImgReader(f *fileInodeOperations, offset int64) *ImgReader {
+	return &ImgReader{f, offset}
 }
 
-// WriteFromBlocksAt implements fsutil.CachedFileObject.WriteFromBlocksAt.
-func (i *inodeFileState) WriteFromBlocksAt(ctx context.Context, srcs safemem.BlockSeq, offset uint64) (uint64, error) {
-	return 0, syserror.EPERM
-}
-
-// SetMaskedAttributes implements fsutil.CachedFileObject.SetMaskedAttributes.
-func (i *inodeFileState) SetMaskedAttributes(ctx context.Context, mask fs.AttrMask, attr fs.UnstableAttr) error {
-	if mask.Empty() {
-		return nil
+func (r ImgReader) ReadToBlocks(dsts safemem.BlockSeq) (uint64, error) {
+	if r.offset >= r.f.attr.Size {
+		return 0, io.EOF
 	}
-	if mask.UID || mask.GID {
-		return syserror.EPERM
+	end := fs.ReadEndOffset(r.offset, int64(dsts.NumBytes()), r.f.attr.Size)
+	if end == r.offset {
+		return 0, nil
 	}
-	if mask.Perms {
-		if err := syscall.Fchmod(i.FD(), uint32(attr.Perms.LinuxMode())); err != nil {
-			return err
-		}
-	}
-	if mask.Size {
-		if err := syscall.Ftruncate(i.FD(), attr.Size); err != nil {
-			return err
-		}
-	}
-	if mask.AccessTime || mask.ModificationTime {
-		ts := fs.TimeSpec{
-			ATime:     attr.AccessTime,
-			ATimeOmit: !mask.AccessTime,
-			MTime:     attr.ModificationTime,
-			MTimeOmit: !mask.ModificationTime,
-		}
-		if err := setTimestamps(i.FD(), ts); err != nil {
-			return err
-		}
-	}
-	return nil
+	src := safemem.BlockSeqOf(safemem.BlockFromSafeSlice([r.f.offsetBegin + r.offset:r.f.offsetEnd]))
+	n, err := safemem.CopySeq(dsts, ims)
+	return n, err
 }
 
-// Sync implements fsutil.CachedFileObject.Sync.
-func (i *inodeFileState) Sync(ctx context.Context) error {
-	return syscall.Fsync(i.FD())
-}
-
-// FD implements fsutil.CachedFileObject.FD.
-func (i *inodeFileState) FD() int {
-	return i.descriptor.value
-}
-
-func (i *inodeFileState) unstableAttr(ctx context.Context) (fs.UnstableAttr, error) {
-	return unstableAttr(ctx, i.descriptor.offsetBegin, i.descriptor.offsetEnd), nil
-}
-
-// inodeOperations implements fs.InodeOperations.
-var _ fs.InodeOperations = (*inodeOperations)(nil)
-
-// newInode returns a new fs.Inode backed by the host FD.
-func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64, m []byte) (*fs.Inode, error) {
-	fileState := &inodeFileState{
-		mops:  msrc.MountSourceOperations.(*superOperations),
-		sattr: stableAttr(),
-		reader: NewImgReader(m, begin, end),
-	}
-
-	// Initialize the wrapped host file descriptor.
-	fileState.descriptor = newDescriptor(begin, end)
-	// Build the fs.InodeOperations.
-	uattr := unstableAttr(ctx, begin, end)
-	iops := &inodeOperations{
-		fileState:       fileState,
-		cachingInodeOps: fsutil.NewCachingInodeOperations(ctx, fileState, uattr, msrc.Flags.ForcePageCache),
-	}
-
-	// Return the fs.Inode.
-	return fs.NewInode(iops, msrc, fileState.sattr), nil
-}
+func (f *fileInodeOperations) Release(context.Context) {}
 
 // Mappable implements fs.InodeOperations.Mappable.
-func (i *inodeOperations) Mappable(inode *fs.Inode) memmap.Mappable {
-	if !canMap(inode) {
-		return nil
-	}
-	return i.cachingInodeOps
-}
-
-// ReturnsWouldBlock returns true if this host FD can return EWOULDBLOCK for
-// operations that would block.
-func (i *inodeOperations) ReturnsWouldBlock() bool {
-	return false
-}
-
-// Release implements fs.InodeOperations.Release.
-func (i *inodeOperations) Release(context.Context) {
-	i.fileState.descriptor.Release()
-	i.cachingInodeOps.Release()
-}
-
-// Lookup implements fs.InodeOperations.Lookup.
-func (i *inodeOperations) Lookup(ctx context.Context, dir *fs.Inode, name string) (*fs.Dirent, error) {
-	// regular file doesn't need lookup. Dir will use ramfs dir
-	return nil, syserror.ENOENT
-}
-
-// Create implements fs.InodeOperations.Create.
-func (i *inodeOperations) Create(ctx context.Context, dir *fs.Inode, name string, flags fs.FileFlags, perm fs.FilePermissions) (*fs.File, error) {
-	return nil, syserror.EPERM
-}
-
-// CreateDirectory implements fs.InodeOperations.CreateDirectory.
-func (i *inodeOperations) CreateDirectory(ctx context.Context, dir *fs.Inode, name string, perm fs.FilePermissions) error {
-	return syserror.EPERM
-}
-
-// CreateLink implements fs.InodeOperations.CreateLink.
-func (i *inodeOperations) CreateLink(ctx context.Context, dir *fs.Inode, oldname string, newname string) error {
-	return syserror.EPERM
-}
-
-// CreateHardLink implements fs.InodeOperations.CreateHardLink.
-func (*inodeOperations) CreateHardLink(context.Context, *fs.Inode, *fs.Inode, string) error {
-	return syserror.EPERM
-}
-
-// CreateFifo implements fs.InodeOperations.CreateFifo.
-func (*inodeOperations) CreateFifo(context.Context, *fs.Inode, string, fs.FilePermissions) error {
-	return syserror.EOPNOTSUPP
-}
-
-// Remove implements fs.InodeOperations.Remove.
-func (i *inodeOperations) Remove(ctx context.Context, dir *fs.Inode, name string) error {
-	return syserror.EPERM
-}
-
-// RemoveDirectory implements fs.InodeOperations.RemoveDirectory.
-func (i *inodeOperations) RemoveDirectory(ctx context.Context, dir *fs.Inode, name string) error {
-	return syserror.EPERM
+func (f *fileInodeOperations) Mappable(*fs.Inode) memmap.Mappable {
+	return f
 }
 
 // Rename implements fs.InodeOperations.Rename.
-func (i *inodeOperations) Rename(ctx context.Context, oldParent *fs.Inode, oldName string, newParent *fs.Inode, newName string, replacement bool) error {
+func (*fileInodeOperations) Rename(ctx context.Context, oldParent *fs.Inode, oldName string, newParent *fs.Inode, newName string, replacement bool) error {
 	return syserror.EPERM
-}
-
-// Bind implements fs.InodeOperations.Bind.
-func (i *inodeOperations) Bind(ctx context.Context, dir *fs.Inode, name string, data transport.BoundEndpoint, perm fs.FilePermissions) (*fs.Dirent, error) {
-	return nil, syserror.EOPNOTSUPP
-}
-
-// BoundEndpoint implements fs.InodeOperations.BoundEndpoint.
-func (i *inodeOperations) BoundEndpoint(inode *fs.Inode, path string) transport.BoundEndpoint {
-	return nil
 }
 
 // GetFile implements fs.InodeOperations.GetFile.
-func (i *inodeOperations) GetFile(ctx context.Context, d *fs.Dirent, flags fs.FileFlags) (*fs.File, error) {
-	return newFile(ctx, d, flags, i), nil
+func (f *fileInodeOperations) GetFile(ctx context.Context, d *fs.Dirent, flags fs.FileFlags) (*fs.File, error) {
+	flags.Pread = true
+	flags.Pwrite = true
+	return fs.NewFile(ctx, d, flags, &regularFileOperations{iops: f}), nil
 }
 
-// canMap returns true if this fs.Inode can be memory mapped.
-func canMap(inode *fs.Inode) bool {
-	// FIXME: Some obscure character devices can be mapped.
-	return fs.IsFile(inode.StableAttr)
-}
-
-// UnstableAttr implements fs.InodeOperations.UnstableAttr.
-func (i *inodeOperations) UnstableAttr(ctx context.Context, inode *fs.Inode) (fs.UnstableAttr, error) {
-	// When the kernel supports mapping host FDs, we do so to take
-	// advantage of the host page cache. We forego updating fs.Inodes
-	// because the host manages consistency of its own inode structures.
-	//
-	// For fs.Inodes that can never be mapped we take advantage of
-	// synchronizing metadata updates through host caches.
-	//
-	// So can we use host kernel metadata caches?
-	if !inode.MountSource.Flags.ForcePageCache || !canMap(inode) {
-		// Then just obtain the attributes.
-		return i.fileState.unstableAttr(ctx)
-	}
-	// No, we're maintaining consistency of metadata ourselves.
-	return i.cachingInodeOps.UnstableAttr(ctx, inode)
+// UnstableAttr returns unstable attributes of this tmpfs file.
+// TODO: fix this
+func (f *fileInodeOperations) UnstableAttr(ctx context.Context, inode *fs.Inode) (fs.UnstableAttr, error) {
+	f.attrMu.Lock()
+	f.dataMu.RLock()
+	attr := f.attr
+	attr.Usage = int64(f.data.Span())
+	f.dataMu.RUnlock()
+	f.attrMu.Unlock()
+	return attr, nil
 }
 
 // Check implements fs.InodeOperations.Check.
-func (i *inodeOperations) Check(ctx context.Context, inode *fs.Inode, p fs.PermMask) bool {
+func (f *fileInodeOperations) Check(ctx context.Context, inode *fs.Inode, p fs.PermMask) bool {
 	return fs.ContextCanAccessFile(ctx, inode, p)
 }
 
-// SetOwner implements fs.InodeOperations.SetOwner.
-func (i *inodeOperations) SetOwner(context.Context, *fs.Inode, fs.FileOwner) error {
-	return syserror.EPERM
-}
-
 // SetPermissions implements fs.InodeOperations.SetPermissions.
-func (i *inodeOperations) SetPermissions(ctx context.Context, inode *fs.Inode, f fs.FilePermissions) bool {
-	// Can we use host kernel metadata caches?
-	if !inode.MountSource.Flags.ForcePageCache || !canMap(inode) {
-		// Then just change the timestamps on the FD, the host
-		// will synchronize the metadata update with any host
-		// inode and page cache.
-		return syscall.Fchmod(i.fileState.FD(), uint32(f.LinuxMode())) == nil
-	}
-	// Otherwise update our cached metadata.
-	return i.cachingInodeOps.SetPermissions(ctx, inode, f)
+func (f *fileInodeOperations) SetPermissions(ctx context.Context, _ *fs.Inode, p fs.FilePermissions) bool {
+	return false
 }
 
 // SetTimestamps implements fs.InodeOperations.SetTimestamps.
-func (i *inodeOperations) SetTimestamps(ctx context.Context, inode *fs.Inode, ts fs.TimeSpec) error {
-	return nil
-}
-
-// Truncate implements fs.InodeOperations.Truncate.
-func (i *inodeOperations) Truncate(ctx context.Context, inode *fs.Inode, size int64) error {
+func (f *fileInodeOperations) SetTimestamps(ctx context.Context, _ *fs.Inode, ts fs.TimeSpec) error {
 	return syserror.EPERM
 }
 
-// WriteOut implements fs.InodeOperations.WriteOut.
-func (i *inodeOperations) WriteOut(ctx context.Context, inode *fs.Inode) error {
+// SetOwner implements fs.InodeOperations.SetOwner.
+func (f *fileInodeOperations) SetOwner(ctx context.Context, _ *fs.Inode, owner fs.FileOwner) error {
 	return syserror.EPERM
 }
 
-// Readlink implements fs.InodeOperations.Readlink.
-func (i *inodeOperations) Readlink(ctx context.Context, inode *fs.Inode) (string, error) {
-	return readLink(i.fileState.FD())
-}
-
-// Getlink implements fs.InodeOperations.Getlink.
-func (i *inodeOperations) Getlink(context.Context, *fs.Inode) (*fs.Dirent, error) {
-	if !fs.IsSymlink(i.fileState.sattr) {
-		return nil, syserror.ENOLINK
-	}
-	return nil, fs.ErrResolveViaReadlink
-}
-
-// StatFS implements fs.InodeOperations.StatFS.
-func (i *inodeOperations) StatFS(context.Context) (fs.Info, error) {
-	return fs.Info{}, syserror.ENOSYS
+func (f *fileInodeOperations) Truncate(ctx context.Context, _ *fs.Inode, size int64) error {
+	return syserror.EPERM
 }
 
 // AddLink implements fs.InodeOperations.AddLink.
-// FIXME: Remove this from InodeOperations altogether.
-func (i *inodeOperations) AddLink() {}
+func (f *fileInodeOperations) AddLink() {}
 
 // DropLink implements fs.InodeOperations.DropLink.
-// FIXME: Remove this from InodeOperations altogether.
-func (i *inodeOperations) DropLink() {}
+func (f *fileInodeOperations) DropLink() {}
 
 // NotifyStatusChange implements fs.InodeOperations.NotifyStatusChange.
-// FIXME: Remove this from InodeOperations altogether.
-func (i *inodeOperations) NotifyStatusChange(ctx context.Context) {}
+func (f *fileInodeOperations) NotifyStatusChange(ctx context.Context) {}
+
+// IsVirtual implements fs.InodeOperations.IsVirtual.
+func (*fileInodeOperations) IsVirtual() bool {
+	return true
+}
+
+// StatFS implements fs.InodeOperations.StatFS.
+func (*fileInodeOperations) StatFS(context.Context) (fs.Info, error) {
+	return fsInfo, nil
+}
+
+// TODO: write this
+func (f *fileInodeOperations) read(ctx context.Context, file *fs.File, dst usermem.IOSequence, offset int64) (int64, error) {
+	if dst.NumBytes() == 0 {
+		return 0, nil
+	}
+	f.dataMu.RLock()
+	size := f.attr.Size
+	f.dataMu.RUnlock()
+
+	if offset >= size {
+		return 0, io.EOF
+	}
+
+	n, err := dst.CopyOutFrom(ctx, &fileReader{f, offset})
+	return n, err
+}
+
+// AddMapping implements memmap.Mappable.AddMapping.
+// TODO: add mapping support
+func (f *fileInodeOperations) AddMapping(ctx context.Context, ms memmap.MappingSpace, ar usermem.AddrRange, offset uint64, writable bool) error {
+	return syserror.EPERM
+}
+
+// RemoveMapping implements memmap.Mappable.RemoveMapping.
+func (f *fileInodeOperations) RemoveMapping(ctx context.Context, ms memmap.MappingSpace, ar usermem.AddrRange, offset uint64, writable bool) {
+	return syserror.EPERM
+}
+
+// CopyMapping implements memmap.Mappable.CopyMapping.
+func (f *fileInodeOperations) CopyMapping(ctx context.Context, ms memmap.MappingSpace, srcAR, dstAR usermem.AddrRange, offset uint64, writable bool) error {
+	return syserror.EPERM
+}
+
+// Translate implements memmap.Mappable.Translate.
+func (f *fileInodeOperations) Translate(ctx context.Context, required, optional memmap.MappableRange, at usermem.AccessType) ([]memmap.Translation, error) {
+	return nil, syserror.EPERM
+}
+
+// InvalidateUnsavable implements memmap.Mappable.InvalidateUnsavable.
+func (f *fileInodeOperations) InvalidateUnsavable(ctx context.Context) error {
+	return nil
+}
+
+// newInode returns a new fs.Inode
+func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64, m []byte) (*fs.Inode, error) {
+	sattr := stableAttr()
+	uattr := unstableAttr(ctx, begin, end)
+	iops := &fileInodeOperations{
+		attr:     uattr,
+		mapArea:	m,
+		offsetBegin:	begin,
+		offsetEnd:		end,
+	}
+	return fs.NewInode(iops, msrc, sattr), nil
+}
