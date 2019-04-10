@@ -135,30 +135,43 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 		  return nil, fmt.Errorf("can't decode metadata data, err: %v", errDec)
 	}
 
+	i := 0
+	return MountImgRecursive(ctx, msrc, metadata, mmap, &i, len(metadata))
+}
+
+func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fileMetadata, mmap []byte, i *int, length int) (*fs.Inode, error) {
 	contents := map[string]*fs.Inode{}
-	for _, v := range metadata {
-		//fileBytes := mmap[v.Begin : v.End]
-		//fileString := string(fileBytes)
-		//log.Infof("file: %v, data: %v\n", v.Name, fileString) // TODO: comment it
-		inode, err := newInode(ctx, msrc, v.Begin, v.End, mmap)
-		contents[v.Name] = inode
-		if err != nil {
-			return nil, fmt.Errorf("can't create inode for %v, err: %v", v.Name, err)
+	for *i < length {
+		offsetBegin := metadata[*i].Begin
+		offsetEnd := metadata[*i].End
+		fileName := metadata[*i].Name
+		if offsetBegin != -1 {
+			inode, err := newInode(ctx, msrc, offsetBegin, offsetEnd, mmap)
+			if err != nil {
+				return nil, fmt.Errorf("can't create inode file %v, err: %v", fileName, err)
+			}
+			contents[fileName] = inode
+			*i = *i + 1
+		} else {
+			*i = *i + 1
+			if fileName != ".." {
+				var err error
+				contents[fileName], err = MountImgRecursive(ctx, msrc, metadata, mmap, i, length)
+				if err != nil {
+					return nil, fmt.Errorf("can't create recursive folder %v, err: %v", fileName, err)
+				}
+			} else {
+				break
+			}
 		}
 	}
-
-
 	d := ramfs.NewDir(ctx, contents, fs.RootOwner, fs.FilePermsFromMode(0555))
-
 	newinode := fs.NewInode(d, msrc, fs.StableAttr{
 		DeviceID:  imgfsFileDevice.DeviceID(),
 		InodeID:   imgfsFileDevice.NextIno(),
 		BlockSize: usermem.PageSize,
 		Type:      fs.Directory,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("cannot create new inode for imgfs root")
-	}
 	return newinode, nil
 }
 
