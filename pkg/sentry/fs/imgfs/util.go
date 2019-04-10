@@ -23,11 +23,11 @@ import (
 	//"gvisor.googlesource.com/gvisor/pkg/log"
 	//"gvisor.googlesource.com/gvisor/pkg/sentry/device"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
-	"gvisor.googlesource.com/gvisor/pkg/sentry/kernel/auth"
+	//"gvisor.googlesource.com/gvisor/pkg/sentry/kernel/auth"
 	ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
 	//"gvisor.googlesource.com/gvisor/pkg/syserror"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
-	//"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
+	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 )
 
 func stableAttr() fs.StableAttr {

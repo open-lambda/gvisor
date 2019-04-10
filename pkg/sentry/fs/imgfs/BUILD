@@ -5,7 +5,6 @@ load("//tools/go_stateify:defs.bzl", "go_library", "go_test")
 go_library(
     name = "imgfs",
     srcs = [
-        "descriptor.go",
         "device.go",
         "file.go",
         "fs.go",
@@ -20,6 +19,7 @@ go_library(
         "//pkg/fd",
         "//pkg/fdnotifier",
         "//pkg/log",
+        "//pkg/metric",
         "//pkg/refs",
         "//pkg/secio",
         "//pkg/sentry/arch",
@@ -38,6 +38,7 @@ go_library(
         "//pkg/sentry/socket/unix/transport",
         "//pkg/sentry/unimpl",
         "//pkg/sentry/uniqueid",
+        "//pkg/sentry/usage",
         "//pkg/sentry/usermem",
         "//pkg/syserr",
         "//pkg/syserror",

@@ -21,6 +21,7 @@ import (
 	"gvisor.googlesource.com/gvisor/pkg/sentry/memmap"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 	"gvisor.googlesource.com/gvisor/pkg/waiter"
+	"gvisor.googlesource.com/gvisor/pkg/syserror"
 )
 
 // fileOperations implements fs.FileOperations for a host file descriptor.
@@ -48,7 +49,7 @@ func (r *regularFileOperations) Read(ctx context.Context, file *fs.File, dst use
 
 // Write implements fs.FileOperations.Write.
 func (r *regularFileOperations) Write(ctx context.Context, file *fs.File, src usermem.IOSequence, offset int64) (int64, error) {
-	return r.iops.write(ctx, src, offset)
+	return 0, syserror.EPERM
 }
 
 // ConfigureMMap implements fs.FileOperations.ConfigureMMap.

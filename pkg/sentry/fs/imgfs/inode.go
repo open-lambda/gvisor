@@ -15,21 +15,21 @@
 package imgfs
 
 import (
-	"fmt"
+	//"fmt"
 	"io"
-	"sync"
-	"time"
+	//"sync"
+	//"time"
 
 	"gvisor.googlesource.com/gvisor/pkg/abi/linux"
-	"gvisor.googlesource.com/gvisor/pkg/metric"
+	//"gvisor.googlesource.com/gvisor/pkg/metric"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs/fsutil"
-	"gvisor.googlesource.com/gvisor/pkg/sentry/kernel"
-	ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
+	//"gvisor.googlesource.com/gvisor/pkg/sentry/kernel"
+	//ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/memmap"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/safemem"
-	"gvisor.googlesource.com/gvisor/pkg/sentry/usage"
+	//"gvisor.googlesource.com/gvisor/pkg/sentry/usage"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 	"gvisor.googlesource.com/gvisor/pkg/syserror"
 )
@@ -46,6 +46,8 @@ type fileInodeOperations struct {
 
 	fsutil.InodeSimpleExtendedAttributes
 
+	attr fs.UnstableAttr
+
 	mapArea []byte
 	offsetBegin int64
 	offsetEnd int64
@@ -60,7 +62,7 @@ func NewImgReader(f *fileInodeOperations, offset int64) *ImgReader {
 	return &ImgReader{f, offset}
 }
 
-func (r ImgReader) ReadToBlocks(dsts safemem.BlockSeq) (uint64, error) {
+func (r *ImgReader) ReadToBlocks(dsts safemem.BlockSeq) (uint64, error) {
 	if r.offset >= r.f.attr.Size {
 		return 0, io.EOF
 	}
@@ -68,9 +70,17 @@ func (r ImgReader) ReadToBlocks(dsts safemem.BlockSeq) (uint64, error) {
 	if end == r.offset {
 		return 0, nil
 	}
-	src := safemem.BlockSeqOf(safemem.BlockFromSafeSlice([r.f.offsetBegin + r.offset:r.f.offsetEnd]))
-	n, err := safemem.CopySeq(dsts, ims)
+	src := safemem.BlockSeqOf(safemem.BlockFromSafeSlice(r.f.mapArea[r.f.offsetBegin + r.offset:r.f.offsetEnd]))
+	n, err := safemem.CopySeq(dsts, src)
 	return n, err
+}
+
+var fsInfo = fs.Info{
+	Type: linux.TMPFS_MAGIC,
+
+	// TODO: allow configuring a tmpfs size and enforce it.
+	TotalBlocks: 0,
+	FreeBlocks:  0,
 }
 
 func (f *fileInodeOperations) Release(context.Context) {}
@@ -95,13 +105,7 @@ func (f *fileInodeOperations) GetFile(ctx context.Context, d *fs.Dirent, flags f
 // UnstableAttr returns unstable attributes of this tmpfs file.
 // TODO: fix this
 func (f *fileInodeOperations) UnstableAttr(ctx context.Context, inode *fs.Inode) (fs.UnstableAttr, error) {
-	f.attrMu.Lock()
-	f.dataMu.RLock()
-	attr := f.attr
-	attr.Usage = int64(f.data.Span())
-	f.dataMu.RUnlock()
-	f.attrMu.Unlock()
-	return attr, nil
+	return f.attr, nil
 }
 
 // Check implements fs.InodeOperations.Check.
@@ -143,24 +147,22 @@ func (*fileInodeOperations) IsVirtual() bool {
 }
 
 // StatFS implements fs.InodeOperations.StatFS.
+// TODO: fix fsInfo
 func (*fileInodeOperations) StatFS(context.Context) (fs.Info, error) {
 	return fsInfo, nil
 }
 
-// TODO: write this
 func (f *fileInodeOperations) read(ctx context.Context, file *fs.File, dst usermem.IOSequence, offset int64) (int64, error) {
 	if dst.NumBytes() == 0 {
 		return 0, nil
 	}
-	f.dataMu.RLock()
 	size := f.attr.Size
-	f.dataMu.RUnlock()
 
 	if offset >= size {
 		return 0, io.EOF
 	}
 
-	n, err := dst.CopyOutFrom(ctx, &fileReader{f, offset})
+	n, err := dst.CopyOutFrom(ctx, &ImgReader{f, offset})
 	return n, err
 }
 
@@ -172,7 +174,6 @@ func (f *fileInodeOperations) AddMapping(ctx context.Context, ms memmap.MappingS
 
 // RemoveMapping implements memmap.Mappable.RemoveMapping.
 func (f *fileInodeOperations) RemoveMapping(ctx context.Context, ms memmap.MappingSpace, ar usermem.AddrRange, offset uint64, writable bool) {
-	return syserror.EPERM
 }
 
 // CopyMapping implements memmap.Mappable.CopyMapping.
