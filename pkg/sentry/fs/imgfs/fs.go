@@ -137,9 +137,9 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 
 	contents := map[string]*fs.Inode{}
 	for _, v := range metadata {
-		fileBytes := mmap[v.Begin : v.End]
-		fileString := string(fileBytes)
-		log.Infof("file: %v, data: %v\n", v.Name, fileString) // TODO: comment it
+		//fileBytes := mmap[v.Begin : v.End]
+		//fileString := string(fileBytes)
+		//log.Infof("file: %v, data: %v\n", v.Name, fileString) // TODO: comment it
 		inode, err := newInode(ctx, msrc, v.Begin, v.End, mmap)
 		contents[v.Name] = inode
 		if err != nil {
