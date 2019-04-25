@@ -136,17 +136,17 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 	}
 
 	i := 0
-	return MountImgRecursive(ctx, msrc, metadata, mmap, &i, len(metadata))
+	return MountImgRecursive(ctx, msrc, metadata, mmap, f.packageFD, &i, len(metadata))
 }
 
-func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fileMetadata, mmap []byte, i *int, length int) (*fs.Inode, error) {
+func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fileMetadata, mmap []byte, packageFD int, i *int, length int) (*fs.Inode, error) {
 	contents := map[string]*fs.Inode{}
 	for *i < length {
 		offsetBegin := metadata[*i].Begin
 		offsetEnd := metadata[*i].End
 		fileName := metadata[*i].Name
 		if offsetBegin != -1 {
-			inode, err := newInode(ctx, msrc, offsetBegin, offsetEnd, mmap)
+			inode, err := newInode(ctx, msrc, offsetBegin, offsetEnd, packageFD, mmap)
 			if err != nil {
 				return nil, fmt.Errorf("can't create inode file %v, err: %v", fileName, err)
 			}
@@ -156,7 +156,7 @@ func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fil
 			*i = *i + 1
 			if fileName != ".." {
 				var err error
-				contents[fileName], err = MountImgRecursive(ctx, msrc, metadata, mmap, i, length)
+				contents[fileName], err = MountImgRecursive(ctx, msrc, metadata, mmap, packageFD, i, length)
 				if err != nil {
 					return nil, fmt.Errorf("can't create recursive folder %v, err: %v", fileName, err)
 				}

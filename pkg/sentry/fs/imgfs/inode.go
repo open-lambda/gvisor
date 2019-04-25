@@ -17,21 +17,14 @@ package imgfs
 import (
 	"fmt"
 	"io"
-	//"sync"
-	//"time"
 
 	"gvisor.googlesource.com/gvisor/pkg/abi/linux"
-	//"gvisor.googlesource.com/gvisor/pkg/metric"
-	//"gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs/fsutil"
-	//"gvisor.googlesource.com/gvisor/pkg/sentry/kernel"
-	//ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/memmap"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/platform"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/safemem"
-	//"gvisor.googlesource.com/gvisor/pkg/sentry/usage"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 	"gvisor.googlesource.com/gvisor/pkg/syserror"
 )
@@ -55,6 +48,8 @@ type fileInodeOperations struct {
 	mapArea []byte
 	offsetBegin int64
 	offsetEnd int64
+
+	packageFD int
 }
 
 type ImgReader struct {
@@ -82,7 +77,7 @@ func (r *ImgReader) ReadToBlocks(dsts safemem.BlockSeq) (uint64, error) {
 var fsInfo = fs.Info{
 	Type: linux.TMPFS_MAGIC,
 
-	// TODO: allow configuring a tmpfs size and enforce it.
+	// TODO: fsInfo is not correctly implemented for ImgFS
 	TotalBlocks: 0,
 	FreeBlocks:  0,
 }
@@ -195,7 +190,7 @@ func (f *fileInodeOperations) IncRef(fr platform.FileRange) {}
 func (f *fileInodeOperations) DecRef(fr platform.FileRange) {}
 
 func (f *fileInodeOperations) FD() int {
-	return 5
+	return f.packageFD
 }
 
 func (f *fileInodeOperations) MapInternal(fr platform.FileRange, at usermem.AccessType) (safemem.BlockSeq, error) {
@@ -242,7 +237,7 @@ func (f *fileInodeOperations) InvalidateUnsavable(ctx context.Context) error {
 }
 
 // newInode returns a new fs.Inode
-func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64, m []byte) (*fs.Inode, error) {
+func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64, packageFD int, m []byte) (*fs.Inode, error) {
 	sattr := stableAttr()
 	uattr := unstableAttr(ctx, begin, end)
 	iops := &fileInodeOperations{
@@ -250,6 +245,7 @@ func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64,
 		mapArea:	m,
 		offsetBegin:	begin,
 		offsetEnd:		end,
+		packageFD:    packageFD,
 	}
 	return fs.NewInode(iops, msrc, sattr), nil
 }
