@@ -32,10 +32,10 @@ go_library(
         "//pkg/sentry/kernel/auth",
         "//pkg/sentry/kernel/time",
         "//pkg/sentry/memmap",
+        "//pkg/sentry/platform",
         "//pkg/sentry/safemem",
         "//pkg/sentry/socket/control",
-        "//pkg/sentry/socket/unix",
-        "//pkg/sentry/socket/unix/transport",
+
         "//pkg/sentry/unimpl",
         "//pkg/sentry/uniqueid",
         "//pkg/sentry/usage",

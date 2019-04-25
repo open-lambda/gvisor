@@ -15,19 +15,21 @@
 package imgfs
 
 import (
-	//"fmt"
+	"fmt"
 	"io"
 	//"sync"
 	//"time"
 
 	"gvisor.googlesource.com/gvisor/pkg/abi/linux"
 	//"gvisor.googlesource.com/gvisor/pkg/metric"
+	//"gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs/fsutil"
 	//"gvisor.googlesource.com/gvisor/pkg/sentry/kernel"
 	//ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/memmap"
+	"gvisor.googlesource.com/gvisor/pkg/sentry/platform"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/safemem"
 	//"gvisor.googlesource.com/gvisor/pkg/sentry/usage"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
@@ -47,6 +49,8 @@ type fileInodeOperations struct {
 	fsutil.InodeSimpleExtendedAttributes
 
 	attr fs.UnstableAttr
+
+	mappings memmap.MappingSet
 
 	mapArea []byte
 	offsetBegin int64
@@ -169,25 +173,71 @@ func (f *fileInodeOperations) read(ctx context.Context, file *fs.File, dst userm
 // AddMapping implements memmap.Mappable.AddMapping.
 // TODO: add mapping support
 func (f *fileInodeOperations) AddMapping(ctx context.Context, ms memmap.MappingSpace, ar usermem.AddrRange, offset uint64, writable bool) error {
-	return syserror.EPERM
+	// f.mappings.AddMapping(ms, ar, offset, false /* writeable */)
+	return nil
 }
 
 // RemoveMapping implements memmap.Mappable.RemoveMapping.
 func (f *fileInodeOperations) RemoveMapping(ctx context.Context, ms memmap.MappingSpace, ar usermem.AddrRange, offset uint64, writable bool) {
+	// f.mappings.RemoveMapping(ms, ar, offset, false /* writeable */)
 }
 
 // CopyMapping implements memmap.Mappable.CopyMapping.
 func (f *fileInodeOperations) CopyMapping(ctx context.Context, ms memmap.MappingSpace, srcAR, dstAR usermem.AddrRange, offset uint64, writable bool) error {
-	return syserror.EPERM
+	// f.mappings.AddMapping(ctx, ms, dstAR, offset, false /* writeable */)
+	return nil
+}
+
+// IncRef implements platform.File.IncRef.
+func (f *fileInodeOperations) IncRef(fr platform.FileRange) {}
+
+// DecRef implements platform.File.DecRef.
+func (f *fileInodeOperations) DecRef(fr platform.FileRange) {}
+
+func (f *fileInodeOperations) FD() int {
+	return 5
+}
+
+func (f *fileInodeOperations) MapInternal(fr platform.FileRange, at usermem.AccessType) (safemem.BlockSeq, error) {
+	if !fr.WellFormed() || fr.Length() == 0 {
+		panic(fmt.Sprintf("invalid range: %v", fr))
+	}
+	if at.Execute {
+		return safemem.BlockSeq{}, syserror.EACCES
+	}
+
+	if f.offsetBegin < 0 || f.offsetEnd < 0 {
+		panic(fmt.Sprintf("invalid file offset, don't mmap directory inode"))
+	}
+
+	unsafeBegin := uint64(f.offsetBegin) + fr.Start
+	unsafeEnd := uint64(f.offsetBegin) + fr.End
+
+	if unsafeBegin > uint64(f.offsetEnd) {
+		return safemem.BlockSeq{}, syserror.EACCES
+	}
+
+	if unsafeEnd > uint64(f.offsetEnd) {
+		unsafeEnd = uint64(f.offsetEnd)
+	}
+	seq := safemem.BlockSeqOf(safemem.BlockFromSafeSlice(f.mapArea[unsafeBegin:unsafeEnd]))
+	return seq, nil
 }
 
 // Translate implements memmap.Mappable.Translate.
 func (f *fileInodeOperations) Translate(ctx context.Context, required, optional memmap.MappableRange, at usermem.AccessType) ([]memmap.Translation, error) {
-	return nil, syserror.EPERM
+	return []memmap.Translation{
+		{
+			Source: optional,
+			File:   f,
+			Offset: optional.Start,
+		},
+	}, nil
 }
 
 // InvalidateUnsavable implements memmap.Mappable.InvalidateUnsavable.
 func (f *fileInodeOperations) InvalidateUnsavable(ctx context.Context) error {
+	f.mappings.InvalidateAll(memmap.InvalidateOpts{})
 	return nil
 }
 
