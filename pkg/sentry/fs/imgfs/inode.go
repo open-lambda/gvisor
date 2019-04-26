@@ -194,6 +194,7 @@ func (f *fileInodeOperations) FD() int {
 }
 
 func (f *fileInodeOperations) MapInternal(fr platform.FileRange, at usermem.AccessType) (safemem.BlockSeq, error) {
+  const pagesize = uint64(4096)
 	if !fr.WellFormed() || fr.Length() == 0 {
 		panic(fmt.Sprintf("invalid range: %v", fr))
 	}
@@ -207,6 +208,18 @@ func (f *fileInodeOperations) MapInternal(fr platform.FileRange, at usermem.Acce
 
 	unsafeBegin := uint64(f.offsetBegin) + fr.Start
 	unsafeEnd := uint64(f.offsetBegin) + fr.End
+
+	boundary := uint64(f.offsetEnd) &^ (pagesize - 1) + pagesize
+
+	if unsafeBegin > boundary {
+		return safemem.BlockSeq{}, syserror.EACCES
+	}
+
+	if unsafeEnd > boundary {
+		unsafeEnd = boundary
+		//panic(fmt.Sprintf("invalid unsafeEnd: %v, current boundary: %v, unsafeBegin: %v, unsafeEnd: %v, fr.Start: %v, fr.End: %v, f.offsetBegin: %v, f.offsetEnd: %v\n", unsafeEnd, boundary, unsafeBegin, unsafeEnd, fr.Start, fr.End, f.offsetBegin, f.offsetEnd))
+	}
+
 	/*
 	if unsafeBegin > uint64(f.offsetEnd) {
 		return safemem.BlockSeq{}, syserror.EACCES
