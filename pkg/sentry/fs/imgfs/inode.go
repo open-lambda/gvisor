@@ -207,7 +207,7 @@ func (f *fileInodeOperations) MapInternal(fr platform.FileRange, at usermem.Acce
 
 	unsafeBegin := uint64(f.offsetBegin) + fr.Start
 	unsafeEnd := uint64(f.offsetBegin) + fr.End
-
+	/*
 	if unsafeBegin > uint64(f.offsetEnd) {
 		return safemem.BlockSeq{}, syserror.EACCES
 	}
@@ -215,6 +215,7 @@ func (f *fileInodeOperations) MapInternal(fr platform.FileRange, at usermem.Acce
 	if unsafeEnd > uint64(f.offsetEnd) {
 		unsafeEnd = uint64(f.offsetEnd)
 	}
+	*/
 	seq := safemem.BlockSeqOf(safemem.BlockFromSafeSlice(f.mapArea[unsafeBegin:unsafeEnd]))
 	return seq, nil
 }
