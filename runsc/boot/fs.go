@@ -269,6 +269,8 @@ func getMountNameAndOptions(conf *Config, m specs.Mount, fds *fdDispenser) (stri
 	case imgfs:
 		fsName = m.Type
 		opts = []string{"packageFD=" + strconv.Itoa(conf.PackageFD)}
+		useOverlay = true
+		// ImgFS will always use overlay
 
 	default:
 		// TODO: Support all the mount types and make this a

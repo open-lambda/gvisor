@@ -323,8 +323,8 @@ func (s *Sandbox) createSandboxProcess(spec *specs.Spec, conf *boot.Config, bund
 		cmd.Args = append(cmd.Args, "--debug-log-fd="+strconv.Itoa(nextFD))
 		nextFD++
 	}
-
-	packageFile, err := os.Open("/tmp/test.img")
+	
+	packageFile, err := os.Open(conf.ImgPath)
 	if err != nil {
 		return fmt.Errorf("opening package file: %v", err)
 	}
