@@ -40,12 +40,14 @@ var (
 	logFilename = flag.String("log", "", "file path where internal debug information is written, default is stdout")
 	logFormat   = flag.String("log-format", "text", "log format: text (default), json, or json-k8s")
 	debug       = flag.Bool("debug", false, "enable debug logging")
+	perf        = flag.Bool("perf", false, "enable perf logging")
 
 	// These flags are unique to runsc, and are used to configure parts of the
 	// system that are not covered by the runtime spec.
 
 	// Debugging flags.
 	debugLog       = flag.String("debug-log", "", "additional location for logs. If it ends with '/', log files are created inside the directory with default names. The following variables are available: %TIMESTAMP%, %COMMAND%.")
+	perfLog	       = flag.String("perf-log", "", "location for logging of perf metrics. Overwrites debug location")
 	logPackets     = flag.Bool("log-packets", false, "enable network packet logging")
 	logFD          = flag.Int("log-fd", -1, "file descriptor to log to.  If set, the 'log' flag is ignored.")
 	debugLogFD     = flag.Int("debug-log-fd", -1, "file descriptor to write debug logs to.  If set, the 'debug-log-dir' flag is ignored.")
@@ -134,9 +136,11 @@ func main() {
 	conf := &boot.Config{
 		RootDir:        *rootDir,
 		Debug:          *debug,
+		Perf:		*perf,
 		LogFilename:    *logFilename,
 		LogFormat:      *logFormat,
 		DebugLog:       *debugLog,
+		PerfLog:	*perfLog,
 		DebugLogFormat: *debugLogFormat,
 		FileAccess:     fsAccess,
 		Overlay:        *overlay,
@@ -158,6 +162,11 @@ func main() {
 	if *debug {
 		log.SetLevel(log.Debug)
 	}
+
+	// Overwrites debugging if perf testing
+	if *perf {
+
+	} log.SetLevel(log.Perf)
 
 	var logFile io.Writer = os.Stderr
 	if *logFD > -1 {
@@ -201,6 +210,14 @@ func main() {
 		} else {
 			e = log.MultiEmitter{e, newEmitter(*debugLogFormat, f)}
 		}
+	} else if *perfLog != "" {
+		f, err := specutils.DebugLogFile(*perfLog, subcommand)
+		if err != nil {
+			cmd.Fatalf("error opening perf log file in %q: %v", *perfLog, err)
+		}
+		e = newEmitter(*debugLogFormat, f)
+		//e = log.MultiEmitter{e, newEmitter(*debugLogFormat, f)}
+
 	} else if *debugLog != "" {
 		f, err := specutils.DebugLogFile(*debugLog, subcommand)
 		if err != nil {
@@ -211,7 +228,8 @@ func main() {
 
 	log.SetTarget(e)
 
-	log.Infof("***************************")
+	// Need to do a perff here to open the time file
+	log.Perff("***************************")
 	log.Infof("Args: %s", os.Args)
 	log.Infof("Git Revision: %s", gitRevision)
 	log.Infof("PID: %d", os.Getpid())

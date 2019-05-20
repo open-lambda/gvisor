@@ -163,6 +163,10 @@ type Config struct {
 	// DebugLog is the path to log debug information to, if not empty.
 	DebugLog string
 
+	PerfLog string
+
+	Perf bool
+
 	// DebugLogFormat is the log format for debug.
 	DebugLogFormat string
 
@@ -217,9 +221,11 @@ func (c *Config) ToFlags() []string {
 	f := []string{
 		"--root=" + c.RootDir,
 		"--debug=" + strconv.FormatBool(c.Debug),
+		"--perf=" + strconv.FormatBool(c.Perf),
 		"--log=" + c.LogFilename,
 		"--log-format=" + c.LogFormat,
 		"--debug-log=" + c.DebugLog,
+		"--perf-log=" + c.PerfLog,
 		"--debug-log-format=" + c.DebugLogFormat,
 		"--file-access=" + c.FileAccess.String(),
 		"--overlay=" + strconv.FormatBool(c.Overlay),

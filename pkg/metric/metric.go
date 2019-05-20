@@ -222,6 +222,7 @@ var (
 //
 // Preconditions:
 //  * Initialize has been called.
+// TODO: Add other methods to print various metrics
 func EmitMetricUpdate() {
 	emitMu.Lock()
 	defer emitMu.Unlock()
@@ -245,6 +246,6 @@ func EmitMetricUpdate() {
 		return
 	}
 
-	log.Debugf("Emitting metrics: %v", m)
+	log.Perff("Emitting metrics: %v", m)
 	eventchannel.Emit(&m)
 }

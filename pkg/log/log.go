@@ -40,8 +40,11 @@ type Level uint32
 // RPCs allow for changing the level as an integer, it is only possible to add
 // additional levels, and the existing one cannot be removed.
 const (
+	// Perf indicates that output is performance sensitive
+	Perf Level = iota
+
 	// Warning indicates that output should always be emitted.
-	Warning Level = iota
+	Warning
 
 	// Info indicates that output should normally be emitted.
 	Info
@@ -192,6 +195,13 @@ func (l *BasicLogger) Warningf(format string, v ...interface{}) {
 	}
 }
 
+func (l *BasicLogger) Perff(format string, v ...interface{}) {
+	if l.IsLogging(Perf) {
+		l.Emit(Perf, time.Now(), format, v...)
+	}
+}
+
+
 // IsLogging implements logger.IsLogging.
 func (l *BasicLogger) IsLogging(level Level) bool {
 	return atomic.LoadUint32((*uint32)(&l.Level)) >= uint32(level)
@@ -243,6 +253,11 @@ func Infof(format string, v ...interface{}) {
 // Warningf logs to the global logger.
 func Warningf(format string, v ...interface{}) {
 	Log().Warningf(format, v...)
+}
+
+// Perff logs to the global logger.
+func Perff(format string, v ...interface{}) {
+	Log().Perff(format, v...)
 }
 
 // defaultStackSize is the default buffer size to allocate for stack traces.
@@ -300,6 +315,8 @@ func CopyStandardLogTo(l Level) error {
 		f = Infof
 	case Warning:
 		f = Warningf
+	case Perf:
+		f = Perff
 	default:
 		return fmt.Errorf("Unknown log level %v", l)
 	}
