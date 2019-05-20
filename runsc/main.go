@@ -165,9 +165,8 @@ func main() {
 
 	// Overwrites debugging if perf testing
 	if *perf {
-
-	} log.SetLevel(log.Perf)
-
+		log.SetLevel(log.Perf)
+	}
 	var logFile io.Writer = os.Stderr
 	if *logFD > -1 {
 		logFile = os.NewFile(uintptr(*logFD), "log file")
