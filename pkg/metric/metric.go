@@ -18,6 +18,7 @@ package metric
 import (
 	"errors"
 	"fmt"
+	"time"
 	"sync"
 	"sync/atomic"
 
@@ -178,6 +179,30 @@ func (m *Uint64Metric) Increment() {
 // IncrementBy increments the metric by v.
 func (m *Uint64Metric) IncrementBy(v uint64) {
 	atomic.AddUint64(&m.value, v)
+}
+
+func (m *Uint64Metric) SetValue(v uint64) {
+	atomic.StoreUint64(&m.value, v)
+}
+
+// StartTimer begins a timer for the given metric
+//
+// Paramter name: The name associated with the metric
+// Returns true if name exists
+// TODO: Use seconds offset too
+func (m *Uint64Metric) StartTimer() {
+	t := time.Now()
+	m.SetValue(uint64(t.Second() * 1000000000) + uint64(time.Now().Nanosecond()))
+}
+
+// EndTimer stops a timer for a given metric. This time is unmodifiable. Saves time in nanosec in metric
+//
+// Paramter name: The name associated with the metric
+// returns true if name exists
+func (m *Uint64Metric) EndTimer() {
+	start := m.Value()
+	t := time.Now()
+	m.SetValue(uint64(t.Second() * 1000000000) + uint64(t.Nanosecond()) - start)
 }
 
 // metricSet holds named metrics.
