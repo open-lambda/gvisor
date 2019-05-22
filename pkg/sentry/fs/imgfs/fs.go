@@ -51,10 +51,20 @@ type Filesystem struct {
 	packageFD int
 }
 
+type fileType int
+
+const(
+	ImgFSRegularFile fileType = iota
+	ImgFSDirectory
+	ImgFSSymlink
+)
+
 type fileMetadata struct {
 	Begin int64
 	End int64
 	Name string
+	Link string
+	Type fileType
 }
 
 var _ fs.Filesystem = (*Filesystem)(nil)
@@ -146,14 +156,16 @@ func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fil
 		offsetBegin := metadata[*i].Begin
 		offsetEnd := metadata[*i].End
 		fileName := metadata[*i].Name
-		if offsetBegin != -1 {
+		fileType := metadata[*i].Type
+
+		if fileType == ImgFSRegularFile {
 			inode, err := newInode(ctx, msrc, offsetBegin, offsetEnd, packageFD, mmap)
 			if err != nil {
 				return nil, fmt.Errorf("can't create inode file %v, err: %v", fileName, err)
 			}
 			contents[fileName] = inode
 			*i = *i + 1
-		} else {
+		} else if fileType == ImgFSDirectory {
 			*i = *i + 1
 			if fileName != ".." {
 				var err error
@@ -164,6 +176,13 @@ func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fil
 			} else {
 				break
 			}
+		} else if fileType == ImgFSSymlink {
+			link := metadata[*i].Link
+			inode := newSymlink(ctx, msrc, link)
+			contents[fileName] = inode
+			*i = *i + 1
+		} else {
+			return nil, fmt.Errorf("unknown file type %v (type: %v)", fileName, fileType)
 		}
 	}
 	d := ramfs.NewDir(ctx, contents, fs.RootOwner, fs.FilePermsFromMode(0555))
