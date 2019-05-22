@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"strconv"
 	"syscall"
+	"time"
 
 	// "gvisor.googlesource.com/gvisor/pkg/log"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
@@ -82,6 +83,7 @@ func (*Filesystem) Flags() fs.FilesystemFlags {
 // Mount returns an fs.Inode exposing the host file system.  It is intended to be locked
 // down in PreExec below.
 func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFlags, data string, _ interface{}) (*fs.Inode, error) {
+  mount_start := time.Now()
 	// Parse generic comma-separated key=value options.
 	options := fs.GenericMountSourceOptions(data)
 
@@ -99,7 +101,7 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 		return nil, fmt.Errorf("invalid packageFD when mounting imgfs: %v", f.packageFD)
 	}
 
-	log.Infof("imgfs.packageFD: %v", f.packageFD)
+	// log.Infof("imgfs.packageFD: %v", f.packageFD)
 
 	// Fail if the caller passed us more options than we know about.
 	if len(options) > 0 {
@@ -127,6 +129,7 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 	if err != nil {
 		return nil, fmt.Errorf("can't read header location, err: %v", err)
 	}
+	mount_prepare := time.Now()
 	header := mmap[int(n) : length - 10]
 	metadataReader := bytes.NewReader(header)
 	var metadata []fileMetadata
@@ -135,9 +138,17 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 	if errDec != nil {
 		  return nil, fmt.Errorf("can't decode metadata data, err: %v", errDec)
 	}
+	mount_read_metadata := time.Now()
 
 	i := 0
-	return MountImgRecursive(ctx, msrc, metadata, mmap, f.packageFD, &i, len(metadata))
+	fsnode, err := MountImgRecursive(ctx, msrc, metadata, mmap, f.packageFD, &i, len(metadata))
+	mount_build_tree := time.Now()
+	log.Infof("imgfs prepare time: %v, read metadata time: %v, tree build time: %v",
+		mount_prepare.Sub(mount_start),
+		mount_read_metadata.Sub(mount_prepare),
+		mount_build_tree.Sub(mount_read_metadata),
+	)
+	return fsnode, err
 }
 
 func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fileMetadata, mmap []byte, packageFD int, i *int, length int) (*fs.Inode, error) {
