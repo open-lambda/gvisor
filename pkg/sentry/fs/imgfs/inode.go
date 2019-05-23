@@ -22,6 +22,7 @@ import (
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs/fsutil"
+	"gvisor.googlesource.com/gvisor/pkg/sentry/fs/ramfs"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/memmap"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/platform"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/safemem"
@@ -50,6 +51,10 @@ type fileInodeOperations struct {
 	offsetEnd int64
 
 	packageFD int
+}
+
+type Symlink struct {
+	ramfs.Symlink
 }
 
 type ImgReader struct {
@@ -262,4 +267,15 @@ func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64,
 		packageFD:    packageFD,
 	}
 	return fs.NewInode(iops, msrc, sattr), nil
+}
+
+// newSymlink returns a new fs.Inode
+func newSymlink(ctx context.Context, msrc *fs.MountSource, target string) *fs.Inode {
+	s := &Symlink{Symlink: *ramfs.NewSymlink(ctx, fs.RootOwner, target)}
+	return fs.NewInode(s, msrc, fs.StableAttr{
+		DeviceID:  imgfsFileDevice.DeviceID(),
+		InodeID:   imgfsFileDevice.NextIno(),
+		BlockSize: usermem.PageSize,
+		Type:      fs.Symlink,
+	})
 }
