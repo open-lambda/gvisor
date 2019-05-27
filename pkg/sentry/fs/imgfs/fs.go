@@ -64,6 +64,7 @@ type fileMetadata struct {
 	End int64
 	Name string
 	Link string
+	ModTime int64
 	Type fileType
 }
 
@@ -157,9 +158,10 @@ func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fil
 		offsetEnd := metadata[*i].End
 		fileName := metadata[*i].Name
 		fileType := metadata[*i].Type
+		fileModTime := metadata[*i].ModTime
 
 		if fileType == ImgFSRegularFile {
-			inode, err := newInode(ctx, msrc, offsetBegin, offsetEnd, packageFD, mmap)
+			inode, err := newInode(ctx, msrc, offsetBegin, offsetEnd, fileModTime, packageFD, mmap)
 			if err != nil {
 				return nil, fmt.Errorf("can't create inode file %v, err: %v", fileName, err)
 			}
