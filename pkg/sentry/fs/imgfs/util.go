@@ -39,15 +39,15 @@ func stableAttr() fs.StableAttr {
 	}
 }
 
-func unstableAttr(ctx context.Context, offsetBegin int64, offsetEnd int64) fs.UnstableAttr {
+func unstableAttr(ctx context.Context, offsetBegin int64, offsetEnd int64, unixTimens int64) fs.UnstableAttr {
 	return fs.UnstableAttr{
 		Size:             offsetEnd - offsetBegin,
 		Usage:            offsetEnd - offsetBegin,
 		Perms:            fs.FilePermsFromMode(0555),
 		Owner:            fs.FileOwnerFromContext(ctx),
-		AccessTime:       ktime.NowFromContext(ctx),
-		ModificationTime: ktime.NowFromContext(ctx),
-		StatusChangeTime: ktime.NowFromContext(ctx),
+		AccessTime:       ktime.FromNanoseconds(unixTimens),
+		ModificationTime: ktime.FromNanoseconds(unixTimens),
+		StatusChangeTime: ktime.FromNanoseconds(unixTimens),
 		Links:            1,
 	}
 }
