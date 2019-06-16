@@ -165,11 +165,6 @@ func main() {
 	if *debug {
 		log.SetLevel(log.Debug)
 	}
-	/*
-	if *packageFD > 0 {
-		cmd.Fatalf("packageFD got!!! %v", *packageFD)
-	}
-	*/
 
 	var logFile io.Writer = os.Stderr
 	if *logFD > -1 {

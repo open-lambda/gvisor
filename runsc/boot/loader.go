@@ -479,7 +479,6 @@ func (l *Loader) run() error {
 	if !ok {
 		return fmt.Errorf("trying to start deleted container %q", l.sandboxID)
 	}
-
 	// Finally done with all configuration. Setup filters before user code
 	// is loaded.
 	if l.conf.DisableSeccomp {
