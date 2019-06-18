@@ -86,8 +86,8 @@ type Boot struct {
 	// pidns is set if the sanadbox is in its own pid namespace.
 	pidns bool
 
-    // experimental feature, a list of layers in container fs
-    layerFDs intFlags
+	// experimental feature, a list of layers in container fs
+	layerFDs intFlags
 }
 
 // Name implements subcommands.Command.Name.
@@ -111,7 +111,7 @@ func (b *Boot) SetFlags(f *flag.FlagSet) {
 	f.IntVar(&b.specFD, "spec-fd", -1, "required fd with the container spec")
 	f.IntVar(&b.controllerFD, "controller-fd", -1, "required FD of a stream socket for the control server that must be donated to this process")
 	f.IntVar(&b.deviceFD, "device-fd", -1, "FD for the platform device file")
-    f.Var(&b.ioFDs, "io-fds", "list of FDs to connect 9P clients. They must follow this order: root first, then mounts as defined in the spec")
+	f.Var(&b.ioFDs, "io-fds", "list of FDs to connect 9P clients. They must follow this order: root first, then mounts as defined in the spec")
 	f.Var(&b.stdioFDs, "stdio-fds", "list of FDs containing sandbox stdin, stdout, and stderr in that order")
 	f.BoolVar(&b.console, "console", false, "set to true if the sandbox should allow terminal ioctl(2) syscalls")
 	f.BoolVar(&b.applyCaps, "apply-caps", false, "if true, apply capabilities defined in the spec to the process")
@@ -122,8 +122,8 @@ func (b *Boot) SetFlags(f *flag.FlagSet) {
 	f.IntVar(&b.userLogFD, "user-log-fd", 0, "file descriptor to write user logs to. 0 means no logging.")
 	f.IntVar(&b.startSyncFD, "start-sync-fd", -1, "required FD to used to synchronize sandbox startup")
 	f.IntVar(&b.mountsFD, "mounts-fd", -1, "mountsFD is the file descriptor to read list of mounts after they have been resolved (direct paths, no symlinks).")
-    // experimental feature
-    f.Var(&b.layerFDs, "layer-fds", "list of FDs containing different layer files for container FS")
+	// experimental feature
+	f.Var(&b.layerFDs, "layer-fds", "list of FDs containing different layer files for container FS")
 }
 
 // Execute implements subcommands.Command.Execute.  It starts a sandbox in a

@@ -91,8 +91,8 @@ type Loader struct {
 	// goferFDs are the FDs that attach the sandbox to the gofers.
 	goferFDs []int
 
-    // experimental feature: container FS
-    layerFDs []int
+	// experimental feature: container FS
+	layerFDs []int
 
 	// spec is the base configuration for the root container.
 	spec *specs.Spec
@@ -176,8 +176,8 @@ type Args struct {
 	TotalMem uint64
 	// UserLogFD is the file descriptor to write user logs to.
 	UserLogFD int
-    // experimental feature: the file descriptors for each layer in container fs
-    LayerFDs []int
+	// experimental feature: the file descriptors for each layer in container fs
+	LayerFDs []int
 }
 
 // New initializes a new kernel loader configured by spec.
@@ -315,8 +315,8 @@ func New(args Args) (*Loader, error) {
 		spec:         args.Spec,
 		goferFDs:     args.GoferFDs,
 		packageFD:    args.PackageFD,
-        layerFDs:     args.LayerFDs,
-        stdioFDs:     args.StdioFDs,
+		layerFDs:     args.LayerFDs,
+		stdioFDs:     args.StdioFDs,
 		rootProcArgs: procArgs,
 		sandboxID:    args.ID,
 		processes:    map[execID]*execProcess{eid: {}},
@@ -511,7 +511,7 @@ func (l *Loader) run() error {
 			l.conf,
 			l.stdioFDs,
 			l.goferFDs,
-            l.layerFDs,
+			l.layerFDs,
 			l.console,
 			l.rootProcArgs.Credentials,
 			l.rootProcArgs.Limits,
@@ -628,7 +628,7 @@ func (l *Loader) startContainer(k *kernel.Kernel, spec *specs.Spec, conf *Config
 		conf,
 		stdioFDs,
 		goferFDs,
-        l.layerFDs,
+		l.layerFDs,
 		false,
 		creds,
 		procArgs.Limits,

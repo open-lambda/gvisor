@@ -811,20 +811,30 @@ func mountExpFS(ctx context.Context, mns *fs.MountNamespace, root *fs.Dirent, la
 	flags := fs.MountSourceFlags{ReadOnly: true}
 	imgFS := mustFindFilesystem("imgfs")
 	maxTraversals := uint(0)
-	imgFSStub, err := mns.FindInode(ctx, root, root, "imgfs", &maxTraversals)
+	dirent, err := mns.FindInode(ctx, root, root, "img_exp", &maxTraversals)
 	if err != nil {
 		return fmt.Errorf("can't find imgfs stub: %v", err)
 	}
-	currentNode := imgFSStub.Inode
+	var currentNode *fs.Inode
 	for index, lfd := range layerFDs {
-		imgfsNode, err := imgFS.Mount(ctx, "imgfs-layer-" + strconv.Itoa(index), flags, "--packageFD=" + strconv.Itoa(lfd), nil)
+		imgfsNode, err := imgFS.Mount(ctx, "imgfs-layer-" + strconv.Itoa(index), flags, "packageFD=" + strconv.Itoa(lfd), nil)
 		if err != nil {
 			return fmt.Errorf("mounting imgfs layer %v, err: %v", index, err)
 		}
-		if currentNode, err = fs.NewOverlayRoot(ctx, imgfsNode, currentNode, flags); err != nil {
-			return fmt.Errorf("creating imgfs overlay: %v", err)
-		}
+        if currentNode != nil {
+		    if currentNode, err = fs.NewOverlayRoot(ctx, imgfsNode, currentNode, flags); err != nil {
+			    return fmt.Errorf("creating imgfs overlay: %v", err)
+		    }
+        } else {
+            currentNode = imgfsNode
+        }
 	}
+    if currentNode == nil {
+        return fmt.Errorf("container fs: currentNode is nil")
+    }
+    if err := mns.Mount(ctx, dirent, currentNode); err != nil {
+        return fmt.Errorf("can't overlay multiple imgfs to stub")
+    }
 	return nil
 }
 // mountTmp mounts an internal tmpfs at '/tmp' if it's safe to do so.
