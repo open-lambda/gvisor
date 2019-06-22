@@ -16,13 +16,13 @@ package boot
 
 import (
 	"fmt"
-	"io"
-	"os"
+	//"io"
+	//"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
+	//"time"
 
 	// Include filesystem types that OCI spec might mount.
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/dev"
@@ -99,9 +99,8 @@ func setupRootContainerFS(userCtx context.Context, rootCtx context.Context, spec
 		Type:        tmpfs,
 		Destination: ChildContainersDir,
 	})
-
 	fds := &fdDispenser{fds: goferFDs}
-	rootInode, err := createRootMount(rootCtx, spec, conf, fds, mounts)
+	rootInode, err := createRootMount(rootCtx, spec, conf, fds, mounts, layerFDs)
 	if err != nil {
 		return fmt.Errorf("creating root mount: %v", err)
 	}
@@ -165,11 +164,6 @@ func compileMounts(spec *specs.Spec) []specs.Mount {
 		})
 	}
 
-	mandatoryMounts = append(mandatoryMounts, specs.Mount{
-		Type:        imgfs,
-		Destination: "/img",
-	})
-
 	// The mandatory mounts should be ordered right after the root, in case
 	// there are submounts of these mandatory mounts already in the spec.
 	mounts = append(mounts[:0], append(mandatoryMounts, mounts[0:]...)...)
@@ -178,7 +172,7 @@ func compileMounts(spec *specs.Spec) []specs.Mount {
 }
 
 // createRootMount creates the root filesystem.
-func createRootMount(ctx context.Context, spec *specs.Spec, conf *Config, fds *fdDispenser, mounts []specs.Mount) (*fs.Inode, error) {
+func createRootMount(ctx context.Context, spec *specs.Spec, conf *Config, fds *fdDispenser, mounts []specs.Mount, layerFDs []int) (*fs.Inode, error) {
 	// First construct the filesystem from the spec.Root.
 	mf := fs.MountSourceFlags{ReadOnly: spec.Root.Readonly}
 
@@ -187,22 +181,14 @@ func createRootMount(ctx context.Context, spec *specs.Spec, conf *Config, fds *f
 		err       error
 	)
 
-	fd := fds.remove()
-	log.Infof("Mounting root over 9P, ioFD: %d", fd)
-	p9FS := mustFindFilesystem("9p")
-	opts := p9MountOptions(fd, conf.FileAccess)
-	rootInode, err = p9FS.Mount(ctx, rootDevice, mf, strings.Join(opts, ","), nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating root mount point: %v", err)
-	}
-
 	// We need to overlay the root on top of a ramfs with stub directories
 	// for submount paths.  "/dev" "/sys" "/proc" and "/tmp" are always
 	// mounted even if they are not in the spec.
-	submounts := append(subtargets("/", mounts), "/dev", "/sys", "/proc", "/tmp", "/ram_packages", "/img", "/img_exp")
-	rootInode, err = addSubmountOverlay(ctx, rootInode, submounts)
+	submounts := append(subtargets("/", mounts), "/dev", "/sys", "/proc", "/tmp")
+	//rootInode, err = addSubmountOverlay
+	rootInode, err = mountExpFS(ctx, layerFDs, submounts)
 	if err != nil {
-		return nil, fmt.Errorf("adding submount overlay: %v", err)
+		return nil, fmt.Errorf("creating root mount point: %v", err)
 	}
 
 	if conf.Overlay && !spec.Root.Readonly {
@@ -293,22 +279,28 @@ func mountSubmounts(ctx context.Context, conf *Config, mns *fs.MountNamespace, r
 		}
 	}
 
-	if err := mountExpFS(ctx, mns, root, layerFDs); err != nil {
-		return fmt.Errorf("mount submount %q: %v", "containerfs(img_exp)", err)
-	}
-
 	if err := mountTmp(ctx, conf, mns, root, fds, mounts); err != nil {
 		return fmt.Errorf("mount submount %q: %v", "tmp", err)
 	}
 
-	if err := mountPackage(ctx, conf, mns, root, fds, mounts); err != nil {
-		return fmt.Errorf("mount submount %q: %v", "ram_packages", err)
-	}
-
-	if !fds.empty() {
-		return fmt.Errorf("not all mount points were consumed, remaining: %v", fds)
-	}
+	//if !fds.empty() {
+	//	return fmt.Errorf("not all mount points were consumed, remaining: %v", fds)
+	//}
 	return nil
+}
+
+// p9MountOptions creates a slice of options for a p9 mount.
+func p9MountOptions(fd int, fa FileAccessType) []string {
+	opts := []string{
+		"trans=fd",
+		"rfdno=" + strconv.Itoa(fd),
+		"wfdno=" + strconv.Itoa(fd),
+		"privateunixsocket=true",
+	}
+	if fa == FileAccessShared {
+		opts = append(opts, "cache=remote_revalidating")
+	}
+	return opts
 }
 
 // mountSubmount mounts volumes inside the container's root. Because mounts may
@@ -373,20 +365,6 @@ func mountSubmount(ctx context.Context, conf *Config, mns *fs.MountNamespace, ro
 
 	log.Infof("Mounted %q to %q type %s", m.Source, m.Destination, m.Type)
 	return inode, dirent, nil
-}
-
-// p9MountOptions creates a slice of options for a p9 mount.
-func p9MountOptions(fd int, fa FileAccessType) []string {
-	opts := []string{
-		"trans=fd",
-		"rfdno=" + strconv.Itoa(fd),
-		"wfdno=" + strconv.Itoa(fd),
-		"privateunixsocket=true",
-	}
-	if fa == FileAccessShared {
-		opts = append(opts, "cache=remote_revalidating")
-	}
-	return opts
 }
 
 // parseAndFilterOptions parses a MountOptions slice and filters by the allowed
@@ -533,7 +511,8 @@ func addSubmountOverlay(ctx context.Context, inode *fs.Inode, submounts []string
 	if err != nil {
 		return nil, fmt.Errorf("creating mount tree: %v", err)
 	}
-	overlayInode, err := fs.NewOverlayRoot(ctx, inode, mountTree, fs.MountSourceFlags{})
+	// overlayInode, err := fs.NewOverlayRoot(ctx, inode, mountTree, fs.MountSourceFlags{})
+overlayInode, err := fs.NewOverlayRoot(ctx, inode, mountTree, fs.MountSourceFlags{})
 	if err != nil {
 		return nil, fmt.Errorf("adding mount overlay: %v", err)
 	}
@@ -612,7 +591,7 @@ func setupContainerFS(procArgs *kernel.CreateProcessArgs, spec *specs.Spec, conf
 
 	// Create the container's root filesystem mount.
 	fds := &fdDispenser{fds: goferFDs}
-	rootInode, err := createRootMount(rootCtx, spec, conf, fds, nil)
+	rootInode, err := createRootMount(rootCtx, spec, conf, fds, nil, layerFDs)
 	if err != nil {
 		return fmt.Errorf("creating filesystem for container: %v", err)
 	}
@@ -729,113 +708,39 @@ func destroyContainerFS(ctx context.Context, cid string, k *kernel.Kernel) error
 	return nil
 }
 
-func mountPackage(ctx context.Context, conf *Config, mns *fs.MountNamespace, root *fs.Dirent, fds *fdDispenser, mounts []specs.Mount) error {
-	for _, m := range mounts {
-		if filepath.Clean(m.Destination) == "/ram_packages" {
-			log.Debugf("Explict %q mount found, skipping internal tmpfs, mount: %+v", "/tmp", m)
-			return nil
-		}
-	}
-
-	maxTraversals := uint(0)
-	tmp, err := mns.FindInode(ctx, root, root, "ram_packages", &maxTraversals)
-	switch err {
-		case nil:
-			// Found '/ram_packages' in filesystem, check if it's empty.
-			defer tmp.DecRef()
-			f, err := tmp.Inode.GetFile(ctx, tmp, fs.FileFlags{Read: true, Directory: true})
-			if err != nil {
-				return err
-			}
-			defer f.DecRef()
-			serializer := &fs.CollectEntriesSerializer{}
-			if err := f.Readdir(ctx, serializer); err != nil {
-				return err
-			}
-			// If more than "." and ".." is found, skip internal tmpfs to prevent hiding
-			// existing files.
-			if len(serializer.Order) > 2 {
-				log.Infof("Skipping internal tmpfs on top %q, because it's not empty", "/ram_packages")
-				return nil
-			}
-			log.Infof("Mounting internal tmpfs on top of empty %q", "/ram_packages")
-			fallthrough
-
-		case syserror.ENOENT:
-			// No '/tmp' found (or fallthrough from above). Safe to mount internal
-			// tmpfs.
-			tmpMount := specs.Mount{
-				Type:        tmpfs,
-				Destination: "/ram_packages",
-			}
-			inode, dirent, err_final := mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
-			if err_final != nil {
-				return err_final
-			}
-			defer dirent.DecRef()
-			// _, _, err_final := mountSubmount(ctx, conf, mns, root, fds, tmpMount, mounts)
-			if inode != nil && dirent != nil {
-				//file_source := "/home/gvisor/test.txt"
-				start := time.Now()
-				preload:= false
-				// disable now
-				if conf.PackageFD > 0 && preload {
-					name := "test.img"
-					file_hd, err := inode.Create(ctx, dirent, name, fs.FileFlags{Read: true, Write: true}, fs.FilePermissions{User: fs.PermMask{Read: true, Write: true}})
-					defer file_hd.DecRef()
-					if err == nil {
-						if file_hd == nil {
-							log.Infof("package file_handler is nil.")
-						}
-						w := &fs.FileWriter{ctx, file_hd}
-						f := os.NewFile(uintptr(conf.PackageFD), "package file")
-						r := io.Reader(f)
-						io.Copy(w, r)
-					} else {
-						log.Infof("Can't create hello_world file when accessing inode.")
-					}
-					log.Infof("package.tar time: %s", time.Since(start))
-				} else {
-					log.Infof("Can't create package.tar file.")
-				}
-			}
-		return err_final
-
-		default:
-			return err
-		}
-	}
-
 // mountExpFS should be executed after root create ramfs stub
-func mountExpFS(ctx context.Context, mns *fs.MountNamespace, root *fs.Dirent, layerFDs []int) error {
+func mountExpFS(ctx context.Context, layerFDs []int, submounts []string) (*fs.Inode, error) {
+	var currentNode *fs.Inode
+
+	if submounts != nil {
+		msrc := fs.NewPseudoMountSource()
+		mountTree, err := ramfs.MakeDirectoryTree(ctx, msrc, submounts)
+		if err != nil {
+			return nil, fmt.Errorf("creating mount tree: %v", err)
+		}
+		currentNode = mountTree
+	}
+
 	flags := fs.MountSourceFlags{ReadOnly: true}
 	imgFS := mustFindFilesystem("imgfs")
-	maxTraversals := uint(0)
-	dirent, err := mns.FindInode(ctx, root, root, "img_exp", &maxTraversals)
-	if err != nil {
-		return fmt.Errorf("can't find imgfs stub: %v", err)
-	}
-	var currentNode *fs.Inode
+
 	for index, lfd := range layerFDs {
 		imgfsNode, err := imgFS.Mount(ctx, "imgfs-layer-" + strconv.Itoa(index), flags, "packageFD=" + strconv.Itoa(lfd), nil)
 		if err != nil {
-			return fmt.Errorf("mounting imgfs layer %v, err: %v", index, err)
+			return nil, fmt.Errorf("mounting imgfs layer %v, err: %v", index, err)
 		}
-        if currentNode != nil {
-		    if currentNode, err = fs.NewOverlayRoot(ctx, imgfsNode, currentNode, flags); err != nil {
-			    return fmt.Errorf("creating imgfs overlay: %v", err)
-		    }
-        } else {
-            currentNode = imgfsNode
-        }
+    if currentNode != nil {
+	    if currentNode, err = fs.NewOverlayRoot(ctx, imgfsNode, currentNode, flags); err != nil {
+		    return nil, fmt.Errorf("creating imgfs overlay: %v", err)
+      }
+		} else {
+      currentNode = imgfsNode
+    }
 	}
-    if currentNode == nil {
-        return fmt.Errorf("container fs: currentNode is nil")
-    }
-    if err := mns.Mount(ctx, dirent, currentNode); err != nil {
-        return fmt.Errorf("can't overlay multiple imgfs to stub")
-    }
-	return nil
+  if currentNode == nil {
+    return nil, fmt.Errorf("container fs: currentNode is nil")
+  }
+	return currentNode, nil
 }
 // mountTmp mounts an internal tmpfs at '/tmp' if it's safe to do so.
 // Technically we don't have to mount tmpfs at /tmp, as we could just rely on

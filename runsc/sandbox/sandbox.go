@@ -18,13 +18,13 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	//"io/ioutil"
+	"io/ioutil"
     "os"
 	"os/exec"
     "path"
-	//"sort"
+	"sort"
     "strconv"
-    //"strings"
+    "strings"
 	"sync"
 	"syscall"
 	"time"
@@ -394,10 +394,15 @@ func (s *Sandbox) createSandboxProcess(spec *specs.Spec, conf *boot.Config, bund
 	}
 
     //Experiemntal Feature: use multiple layers of imgfs to replace gofer.
-    //files, err := ioutil.ReadDir(spec.Root.Path)
-    layers := [3]string{"layer1.img", "layer2.img", "layer3.img"}
+    files, err := ioutil.ReadDir(spec.Root.Path)
+    var layers []string
+    for _, file := range files {
+        if strings.HasSuffix(file.Name(), ".img") {
+            layers = append(layers, file.Name())
+        }
+    }
     // Layers have their order. We assume the layer with lower ascii order is the lower layer. e.g. layer1.img > layer2.img > layer3.img
-    //sort.Strings(layers)
+    sort.Strings(layers)
     for _, layer := range layers {
         layerFile, err := os.OpenFile(path.Join(spec.Root.Path, layer), os.O_RDONLY, 0644)
         if err != nil {
