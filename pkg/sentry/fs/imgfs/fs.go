@@ -57,6 +57,7 @@ const(
 	ImgFSRegularFile fileType = iota
 	ImgFSDirectory
 	ImgFSSymlink
+	ImgFSWhiteoutFile
 )
 
 type fileMetadata struct {
@@ -127,10 +128,13 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 	}
 	log.Infof("stat package file size: %v", s.Size)
 	length := int(s.Size)
+    if length == 0 {
+        return nil, fmt.Errorf("the image file size shouldn't be zero")
+    }
 	// mmap, err := syscall.Mmap(int(f.packageFD), 0, length, syscall.PROT_READ|syscall.PROT_EXEC, syscall.MAP_SHARED)
 	mmap, err := syscall.Mmap(int(f.packageFD), 0, length, syscall.PROT_READ, syscall.MAP_SHARED)
 	if err != nil {
-		return nil, fmt.Errorf("can't mmap the package image file, err: %v", err)
+        return nil, fmt.Errorf("can't mmap the package image file, packageFD: %v, length: %v, err: %v", int(f.packageFD), length, err)
 	}
 	headerLoc := mmap[length - 10 : length]
 	headerReader := bytes.NewReader(headerLoc)
@@ -153,6 +157,7 @@ func (f *Filesystem) Mount(ctx context.Context, _ string, flags fs.MountSourceFl
 
 func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fileMetadata, mmap []byte, packageFD int, i *int, length int) (*fs.Inode, error) {
 	contents := map[string]*fs.Inode{}
+	var whitoutFiles []string
 	for *i < length {
 		offsetBegin := metadata[*i].Begin
 		offsetEnd := metadata[*i].End
@@ -183,6 +188,9 @@ func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fil
 			inode := newSymlink(ctx, msrc, link)
 			contents[fileName] = inode
 			*i = *i + 1
+		} else if fileType == ImgFSWhiteoutFile {
+			whitoutFiles = append(whitoutFiles, fileName)
+			*i = *i + 1
 		} else {
 			return nil, fmt.Errorf("unknown file type %v (type: %v)", fileName, fileType)
 		}
@@ -194,6 +202,10 @@ func MountImgRecursive(ctx context.Context, msrc *fs.MountSource, metadata []fil
 		BlockSize: usermem.PageSize,
 		Type:      fs.Directory,
 	})
+
+	for _, fn := range whitoutFiles {
+		newinode.InodeOperations.Setxattr(newinode, fs.XattrOverlayWhiteout(fn), []byte("y"))
+	}
 	return newinode, nil
 }
 

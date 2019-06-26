@@ -727,7 +727,7 @@ func mountExpFS(ctx context.Context, layerFDs []int, submounts []string) (*fs.In
 	for index, lfd := range layerFDs {
 		imgfsNode, err := imgFS.Mount(ctx, "imgfs-layer-" + strconv.Itoa(index), flags, "packageFD=" + strconv.Itoa(lfd), nil)
 		if err != nil {
-			return nil, fmt.Errorf("mounting imgfs layer %v, err: %v", index, err)
+			return nil, fmt.Errorf("mounting imgfs layer %v, layerFD %v, err: %v", index, lfd, err)
 		}
     if currentNode != nil {
 	    if currentNode, err = fs.NewOverlayRoot(ctx, imgfsNode, currentNode, flags); err != nil {
