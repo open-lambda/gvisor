@@ -16,13 +16,10 @@ package boot
 
 import (
 	"fmt"
-	//"io"
-	//"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
-	//"time"
 
 	// Include filesystem types that OCI spec might mount.
 	_ "gvisor.googlesource.com/gvisor/pkg/sentry/fs/dev"
@@ -191,6 +188,9 @@ func createRootMount(ctx context.Context, spec *specs.Spec, conf *Config, fds *f
 		return nil, fmt.Errorf("creating root mount point: %v", err)
 	}
 
+	//TODO frank: force conf.Overlay to be true now. Figure out why root dir can be read-only
+	conf.Overlay = true
+
 	if conf.Overlay && !spec.Root.Readonly {
 		log.Debugf("Adding overlay on top of root mount")
 		// Overlay a tmpfs filesystem on top of the root.
@@ -283,6 +283,7 @@ func mountSubmounts(ctx context.Context, conf *Config, mns *fs.MountNamespace, r
 		return fmt.Errorf("mount submount %q: %v", "tmp", err)
 	}
 
+	// TODO frank: Fixme
 	//if !fds.empty() {
 	//	return fmt.Errorf("not all mount points were consumed, remaining: %v", fds)
 	//}
