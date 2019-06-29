@@ -15,17 +15,11 @@
 package imgfs
 
 import (
-	//"os"
-	//"path"
-	//"syscall"
+	"os"
 
-	//"gvisor.googlesource.com/gvisor/pkg/abi/linux"
-	//"gvisor.googlesource.com/gvisor/pkg/log"
-	//"gvisor.googlesource.com/gvisor/pkg/sentry/device"
+	"gvisor.googlesource.com/gvisor/pkg/abi/linux"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/fs"
-	//"gvisor.googlesource.com/gvisor/pkg/sentry/kernel/auth"
 	ktime "gvisor.googlesource.com/gvisor/pkg/sentry/kernel/time"
-	//"gvisor.googlesource.com/gvisor/pkg/syserror"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/usermem"
 )
@@ -39,11 +33,11 @@ func stableAttr() fs.StableAttr {
 	}
 }
 
-func unstableAttr(ctx context.Context, offsetBegin int64, offsetEnd int64, unixTimens int64) fs.UnstableAttr {
+func unstableAttr(ctx context.Context, offsetBegin int64, offsetEnd int64, unixTimens int64, mode os.FileMode) fs.UnstableAttr {
 	return fs.UnstableAttr{
 		Size:             offsetEnd - offsetBegin,
 		Usage:            offsetEnd - offsetBegin,
-		Perms:            fs.FilePermsFromMode(0555),
+		Perms:            fs.FilePermsFromMode(linux.FileMode(mode)),
 		Owner:            fs.FileOwnerFromContext(ctx),
 		AccessTime:       ktime.FromNanoseconds(unixTimens),
 		ModificationTime: ktime.FromNanoseconds(unixTimens),

@@ -17,6 +17,7 @@ package imgfs
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"gvisor.googlesource.com/gvisor/pkg/abi/linux"
 	"gvisor.googlesource.com/gvisor/pkg/sentry/context"
@@ -256,9 +257,9 @@ func (f *fileInodeOperations) InvalidateUnsavable(ctx context.Context) error {
 }
 
 // newInode returns a new fs.Inode
-func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64, modTime int64, packageFD int, m []byte) (*fs.Inode, error) {
+func newInode(ctx context.Context, msrc *fs.MountSource, begin int64, end int64, modTime int64, mode os.FileMode, packageFD int, m []byte) (*fs.Inode, error) {
 	sattr := stableAttr()
-	uattr := unstableAttr(ctx, begin, end, modTime)
+	uattr := unstableAttr(ctx, begin, end, modTime, mode)
 	iops := &fileInodeOperations{
 		attr:     uattr,
 		mapArea:	m,
