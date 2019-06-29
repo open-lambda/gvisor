@@ -226,7 +226,6 @@ func (c *Config) ToFlags() []string {
 		"--debug-log=" + c.DebugLog,
 		"--debug-log-format=" + c.DebugLogFormat,
 		"--file-access=" + c.FileAccess.String(),
-		"--img-path=" + c.ImgPath,
 		"--overlay=" + strconv.FormatBool(c.Overlay),
 		"--network=" + c.Network.String(),
 		"--log-packets=" + strconv.FormatBool(c.LogPackets),
@@ -237,6 +236,9 @@ func (c *Config) ToFlags() []string {
 		"--watchdog-action=" + c.WatchdogAction.String(),
 		"--panic-signal=" + strconv.Itoa(c.PanicSignal),
 		"--profile=" + strconv.FormatBool(c.ProfileEnable),
+	}
+	if c.ImgPath != "" {
+		f = append(f, "--img-path=" + c.ImgPath)
 	}
 	if c.TestOnlyAllowRunAsCurrentUserWithoutChroot {
 		// Only include if set since it is never to be used by users.

@@ -46,7 +46,7 @@ var (
 
 	// Debugging flags.
 	debugLog       = flag.String("debug-log", "", "additional location for logs. If it ends with '/', log files are created inside the directory with default names. The following variables are available: %TIMESTAMP%, %COMMAND%.")
-  imgPath				 = flag.String("img-path", "", "image path for ImgFS")
+	imgPath        = flag.String("img-path", "", "image path for ImgFS")
 	logPackets     = flag.Bool("log-packets", false, "enable network packet logging")
 	logFD          = flag.Int("log-fd", -1, "file descriptor to log to.  If set, the 'log' flag is ignored.")
 	debugLogFD     = flag.Int("debug-log-fd", -1, "file descriptor to write debug logs to.  If set, the 'debug-log-dir' flag is ignored.")
@@ -132,9 +132,6 @@ func main() {
 		cmd.Fatalf("%v", err)
 	}
 
-	if *imgPath == "" {
-		cmd.Fatalf("imgPath %v is invalid", *imgPath)
-	}
 	// Create a new Config from the flags.
 	conf := &boot.Config{
 		RootDir:        *rootDir,
@@ -144,11 +141,11 @@ func main() {
 		DebugLog:       *debugLog,
 		DebugLogFormat: *debugLogFormat,
 		FileAccess:     fsAccess,
-		ImgPath:				*imgPath,
+		ImgPath:        *imgPath, // Note: imgPath can be empty string (disable the feature)
 		Overlay:        *overlay,
 		Network:        netType,
 		LogPackets:     *logPackets,
-		PackageFD:			*packageFD,
+		PackageFD:      *packageFD,
 		Platform:       platformType,
 		Strace:         *strace,
 		StraceLogSize:  *straceLogSize,
